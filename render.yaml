@@ -1,0 +1,23 @@
+# Render Blueprint: GitHub reposunu Render-ə qoşduqda veb xidmət və PostgreSQL avtomatik yaradılır.
+services:
+  - type: web
+    name: qiymetlendirme-portali
+    runtime: docker
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: qiymetlendirme-db
+          property: connectionString
+      - key: COOKIE_SECURE
+        value: "1"
+      # İlk yayımda Render bu iki dəyəri soruşacaq; ilkin admin hesabı onlarla yaradılır.
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
+databases:
+  - name: qiymetlendirme-db
+    databaseName: portal
+    user: portal
