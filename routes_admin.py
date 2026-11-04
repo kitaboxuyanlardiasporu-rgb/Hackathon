@@ -34,12 +34,18 @@ from .schemas import (
     JuryRenameIn,
     NameIn,
     RenameIn,
+    OperatorCreateIn,
+    OperatorUpdateIn,
     UnlockIn,
 )
-from .security import hash_password, require_admin, validate_password
+from .security import PERMISSIONS, hash_password, require_admin, require_perm, require_staff, validate_password
 from .setup_db import create_contest
 
-router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
+# Admin və operator bu routerə daxil olur; hər endpoint öz icazəsini ayrıca yoxlayır.
+router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_staff)])
+ADMIN_ONLY = [Depends(require_admin)]
+PERM_CONTESTS = require_perm("contests")
+PERM_JURIES = require_perm("juries")
 
 CONFLICT_MSG = "Bu məlumat başqa istifadəçi tərəfindən dəyişdirilib. Səhifəni yeniləyib yenidən cəhd edin."
 USERNAME_RE = re.compile(r"^[\w.\-]{3,50}$", re.UNICODE)
@@ -84,7 +90,7 @@ def list_contests(db: Session = Depends(get_db)):
 
 
 @router.post("/contests")
-def create_new_contest(body: ContestCreateIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def create_new_contest(body: ContestCreateIn, admin: User = Depends(PERM_CONTESTS), db: Session = Depends(get_db)):
     name = clean_name(body.name, "Müsabiqənin adı", 200)
     custom_max = _validate_type(body.eval_type, body.custom_max)
     if not (0 <= body.team_count <= 100):
@@ -120,8 +126,6 @@ def delete_contest(cid: int, body: ContestDeleteIn, admin: User = Depends(requir
     c = lock_contest(db, cid)
     if (body.confirm_name or "").strip() != c.name:
         raise HTTPException(400, "Təsdiq üçün müsabiqənin adını dəqiq yazın.")
-    if (db.scalar(select(func.count(Contest.id))) or 0) <= 1:
-        raise HTTPException(409, "Ən azı bir müsabiqə qalmalıdır. Əvvəlcə yeni müsabiqə yaradın.")
     stats = progress(db, cid)
     eval_ids = select(Evaluation.id).where(Evaluation.contest_id == cid)
     db.execute(delete(Score).where(Score.evaluation_id.in_(eval_ids)))
@@ -151,13 +155,13 @@ def overview(cid: int, db: Session = Depends(get_db)):
     }
 
 
-@router.get(C + "/contest")
+@router.get(C + "/contest", dependencies=[Depends(PERM_CONTESTS)])
 def get_contest_settings(cid: int, db: Session = Depends(get_db)):
     return {"contest": contest_payload(db, get_contest(db, cid)), "teams": team_count(db, cid)}
 
 
 @router.put(C + "/contest")
-def update_contest(cid: int, body: ContestUpdateIn, admin: User = Depends(require_admin),
+def update_contest(cid: int, body: ContestUpdateIn, admin: User = Depends(PERM_CONTESTS),
                    db: Session = Depends(get_db)):
     contest = lock_contest(db, cid)
     if body.version != contest.version:
@@ -193,8 +197,9 @@ def update_contest(cid: int, body: ContestUpdateIn, admin: User = Depends(requir
 
 
 # ================================================================ komandalar və meyarlar
-def _entity_routes(model, path: str, label: str, label_gen: str, action: str):
+def _entity_routes(model, path: str, label: str, label_gen: str, action: str, perm: str):
     """Komanda və meyar üçün eyni CRUD qaydaları."""
+    need = require_perm(perm)
 
     def _get_item(db: Session, cid: int, item_id: int):
         item = db.get(model, item_id)
@@ -217,7 +222,7 @@ def _entity_routes(model, path: str, label: str, label_gen: str, action: str):
             "contest": contest_payload(db, contest),
         }
 
-    def _create(cid: int, body: NameIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    def _create(cid: int, body: NameIn, admin: User = Depends(need), db: Session = Depends(get_db)):
         contest = lock_contest(db, cid)
         if contest.structure_locked:
             raise HTTPException(409, f"İlk qiymətləndirmə təsdiqləndikdən sonra {label_gen} sayı dəyişdirilə bilməz.")
@@ -232,7 +237,7 @@ def _entity_routes(model, path: str, label: str, label_gen: str, action: str):
         db.commit()
         return {"id": item.id, "name": item.name, "version": item.version}
 
-    def _rename(cid: int, item_id: int, body: RenameIn, admin: User = Depends(require_admin),
+    def _rename(cid: int, item_id: int, body: RenameIn, admin: User = Depends(need),
                 db: Session = Depends(get_db)):
         lock_contest(db, cid)
         item = _get_item(db, cid, item_id)
@@ -248,7 +253,7 @@ def _entity_routes(model, path: str, label: str, label_gen: str, action: str):
         db.commit()
         return {"id": item.id, "name": item.name, "version": item.version}
 
-    def _delete(cid: int, item_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    def _delete(cid: int, item_id: int, admin: User = Depends(need), db: Session = Depends(get_db)):
         contest = lock_contest(db, cid)
         if contest.structure_locked:
             raise HTTPException(409, f"İlk qiymətləndirmə təsdiqləndikdən sonra {label_gen} silmək mümkün deyil.")
@@ -258,14 +263,14 @@ def _entity_routes(model, path: str, label: str, label_gen: str, action: str):
         db.commit()
         return {"ok": True}
 
-    router.add_api_route(f"{C}/{path}", _list, methods=["GET"])
+    router.add_api_route(f"{C}/{path}", _list, methods=["GET"], dependencies=[Depends(need)])
     router.add_api_route(f"{C}/{path}", _create, methods=["POST"])
     router.add_api_route(f"{C}/{path}/{{item_id}}", _rename, methods=["PATCH"])
     router.add_api_route(f"{C}/{path}/{{item_id}}", _delete, methods=["DELETE"])
 
 
-_entity_routes(Team, "teams", "Komanda", "komanda", "team")
-_entity_routes(Criterion, "criteria", "Meyar", "meyar", "criterion")
+_entity_routes(Team, "teams", "Komanda", "komanda", "team", "teams")
+_entity_routes(Criterion, "criteria", "Meyar", "meyar", "criterion", "criteria")
 
 
 # ================================================================ jürilər
@@ -288,14 +293,14 @@ def _username_taken(db: Session, u: str, exclude_id: int | None = None) -> bool:
 TAKEN_MSG = "Bu istifadəçi adı artıq istifadə olunur (başqa müsabiqədə də ola bilər)."
 
 
-@router.get(C + "/juries")
+@router.get(C + "/juries", dependencies=[Depends(PERM_JURIES)])
 def list_juries(cid: int, db: Session = Depends(get_db)):
     get_contest(db, cid)
     return {"items": jury_progress(db, cid), "progress": progress(db, cid)}
 
 
 @router.post(C + "/juries")
-def create_jury(cid: int, body: JuryCreateIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def create_jury(cid: int, body: JuryCreateIn, admin: User = Depends(PERM_JURIES), db: Session = Depends(get_db)):
     contest = lock_contest(db, cid)
     u = _clean_username(body.username)
     validate_password(body.password)
@@ -321,7 +326,7 @@ def _get_jury(db: Session, cid: int, jury_id: int) -> User:
 
 
 @router.patch(C + "/juries/{jury_id}")
-def rename_jury(cid: int, jury_id: int, body: JuryRenameIn, admin: User = Depends(require_admin),
+def rename_jury(cid: int, jury_id: int, body: JuryRenameIn, admin: User = Depends(PERM_JURIES),
                 db: Session = Depends(get_db)):
     lock_contest(db, cid)
     j = _get_jury(db, cid, jury_id)
@@ -343,7 +348,7 @@ def rename_jury(cid: int, jury_id: int, body: JuryRenameIn, admin: User = Depend
 
 
 @router.post(C + "/juries/{jury_id}/password")
-def reset_jury_password(cid: int, jury_id: int, body: JuryPasswordIn, admin: User = Depends(require_admin),
+def reset_jury_password(cid: int, jury_id: int, body: JuryPasswordIn, admin: User = Depends(PERM_JURIES),
                         db: Session = Depends(get_db)):
     j = _get_jury(db, cid, jury_id)
     validate_password(body.password)
@@ -356,17 +361,42 @@ def reset_jury_password(cid: int, jury_id: int, body: JuryPasswordIn, admin: Use
 
 
 @router.delete(C + "/juries/{jury_id}")
-def delete_jury(cid: int, jury_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def delete_jury(cid: int, jury_id: int, with_scores: bool = Query(False), admin: User = Depends(PERM_JURIES),
+                db: Session = Depends(get_db)):
     lock_contest(db, cid)
     j = _get_jury(db, cid, jury_id)
-    if db.scalar(select(func.count(Evaluation.id)).where(Evaluation.jury_id == j.id)):
-        raise HTTPException(
-            409, "Bu jürinin təsdiqlənmiş qiymətləndirmələri var. Silmək üçün əvvəlcə onların kilidini açın."
-        )
-    audit(db, admin, "jury_delete", f"Jüri hesabı silindi: «{j.username}».", contest_id=cid)
+    evals = db.scalars(
+        select(Evaluation).where(Evaluation.jury_id == j.id).options(selectinload(Evaluation.scores))
+    ).all()
+    details = None
+    if evals:
+        if admin.role != "admin":
+            raise HTTPException(403, "Təsdiqlənmiş balı olan jürini yalnız admin silə bilər.")
+        if not with_scores:
+            raise HTTPException(
+                409, "Bu jürinin təsdiqlənmiş qiymətləndirmələri var. Hesabı ballarla birlikdə silmək üçün təsdiq tələb olunur."
+            )
+        criteria = {c.id: c.name for c in _criteria(db, cid)}
+        teams = {t.id: t.name for t in _teams(db, cid)}
+        details = {
+            "jury": j.username,
+            "deleted": {
+                teams.get(e.team_id, str(e.team_id)): {criteria.get(s.criterion_id, str(s.criterion_id)): s.value
+                                                       for s in e.scores}
+                for e in evals
+            },
+        }
+        eval_ids = [e.id for e in evals]
+        db.execute(delete(Score).where(Score.evaluation_id.in_(eval_ids)))
+        db.execute(delete(Evaluation).where(Evaluation.id.in_(eval_ids)))
+    db.execute(delete(SessionToken).where(SessionToken.user_id == j.id))
+    summary = f"Jüri hesabı silindi: «{j.username}»."
+    if evals:
+        summary = f"Jüri hesabı {len(evals)} təsdiqlənmiş qiymətləndirməsi ilə birlikdə silindi: «{j.username}»."
+    audit(db, admin, "jury_delete", summary, details, contest_id=cid)
     db.delete(j)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "deleted_evaluations": len(evals)}
 
 
 # ================================================================ qiymətləndirmələr
@@ -392,7 +422,7 @@ def _criteria(db, cid):
     ).all()
 
 
-@router.get(C + "/juries/{jury_id}/evaluations")
+@router.get(C + "/juries/{jury_id}/evaluations", dependencies=ADMIN_ONLY)
 def jury_evaluations(cid: int, jury_id: int, db: Session = Depends(get_db)):
     j = _get_jury(db, cid, jury_id)
     contest = get_contest(db, cid)
@@ -531,7 +561,7 @@ def unlock_evaluation(cid: int, evaluation_id: int, body: UnlockIn, admin: User 
 
 
 # ================================================================ nəticələr
-@router.get(C + "/results")
+@router.get(C + "/results", dependencies=ADMIN_ONLY)
 def results(cid: int, db: Session = Depends(get_db)):
     return compute_results(db, cid)
 
@@ -543,7 +573,7 @@ def _csv_safe(v):
     return s
 
 
-@router.get(C + "/results.csv")
+@router.get(C + "/results.csv", dependencies=ADMIN_ONLY)
 def results_csv(cid: int, db: Session = Depends(get_db)):
     r = compute_results(db, cid)
     c, p = r["contest"], r["progress"]
@@ -570,7 +600,7 @@ def results_csv(cid: int, db: Session = Depends(get_db)):
 
 
 # ================================================================ tarixçə
-@router.get(C + "/audit")
+@router.get(C + "/audit", dependencies=ADMIN_ONLY)
 def audit_log(
     cid: int,
     db: Session = Depends(get_db),
@@ -583,8 +613,8 @@ def audit_log(
     q = select(AuditLog).where(cond)
     cq = select(func.count(AuditLog.id)).where(cond)
     if only_admin:
-        q = q.where(AuditLog.actor_role == "admin")
-        cq = cq.where(AuditLog.actor_role == "admin")
+        q = q.where(AuditLog.actor_role.in_(("admin", "operator")))
+        cq = cq.where(AuditLog.actor_role.in_(("admin", "operator")))
     rows = db.scalars(q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).offset(offset).limit(limit)).all()
     return {
         "total": db.scalar(cq) or 0,
@@ -601,3 +631,107 @@ def audit_log(
             for a in rows
         ],
     }
+
+
+# ================================================================ operatorlar (yalnız admin)
+def _clean_perms(perms: list[str]) -> list[str]:
+    bad = [p for p in perms if p not in PERMISSIONS]
+    if bad:
+        raise HTTPException(400, "Naməlum icazə.")
+    return [p for p in PERMISSIONS if p in perms]  # sabit sıra, təkrarsız
+
+
+def _perm_labels(perms: list[str]) -> str:
+    return ", ".join(PERMISSIONS[p] for p in perms) or "icazə yoxdur"
+
+
+def _operator_payload(u: User) -> dict:
+    return {"id": u.id, "username": u.username, "permissions": _clean_perms(u.permissions or []),
+            "version": u.version, "created_at": u.created_at.isoformat() if u.created_at else None}
+
+
+def _get_operator(db: Session, op_id: int) -> User:
+    u = db.get(User, op_id)
+    if not u or u.role != "operator":
+        raise HTTPException(404, "Operator tapılmadı.")
+    return u
+
+
+@router.get("/operators", dependencies=ADMIN_ONLY)
+def list_operators(db: Session = Depends(get_db)):
+    ops = db.scalars(select(User).where(User.role == "operator").order_by(func.lower(User.username))).all()
+    return {"items": [_operator_payload(u) for u in ops],
+            "permissions": [{"key": k, "label": v} for k, v in PERMISSIONS.items()]}
+
+
+@router.post("/operators")
+def create_operator(body: OperatorCreateIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    u = _clean_username(body.username)
+    validate_password(body.password)
+    perms = _clean_perms(body.permissions)
+    if _username_taken(db, u):
+        raise HTTPException(409, TAKEN_MSG)
+    op = User(username=u, password_hash=hash_password(body.password), role="operator", permissions=perms)
+    db.add(op)
+    db.flush()
+    audit(db, admin, "operator_create", f"Operator hesabı yaradıldı: «{u}».", {"permissions": _perm_labels(perms)})
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, TAKEN_MSG)
+    return _operator_payload(op)
+
+
+@router.patch("/operators/{op_id}")
+def update_operator(op_id: int, body: OperatorUpdateIn, admin: User = Depends(require_admin),
+                    db: Session = Depends(get_db)):
+    op = db.execute(select(User).where(User.id == op_id).with_for_update()).scalar_one_or_none()
+    if not op or op.role != "operator":
+        raise HTTPException(404, "Operator tapılmadı.")
+    if op.version != body.version:
+        raise HTTPException(409, CONFLICT_MSG)
+    u = _clean_username(body.username)
+    perms = _clean_perms(body.permissions)
+    if _username_taken(db, u, op.id):
+        raise HTTPException(409, TAKEN_MSG)
+    changes = {}
+    if u != op.username:
+        changes["İstifadəçi adı"] = [op.username, u]
+    old_perms = _clean_perms(op.permissions or [])
+    if perms != old_perms:
+        changes["İcazələr"] = [_perm_labels(old_perms), _perm_labels(perms)]
+    if changes:
+        audit(db, admin, "operator_update", f"Operator dəyişdirildi: «{op.username}».", {"changes": changes})
+        op.username = u
+        op.permissions = perms
+        op.version += 1
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, TAKEN_MSG)
+    return _operator_payload(op)
+
+
+@router.post("/operators/{op_id}/password")
+def reset_operator_password(op_id: int, body: JuryPasswordIn, admin: User = Depends(require_admin),
+                            db: Session = Depends(get_db)):
+    op = _get_operator(db, op_id)
+    validate_password(body.password)
+    op.password_hash = hash_password(body.password)
+    op.version += 1
+    db.execute(delete(SessionToken).where(SessionToken.user_id == op.id))
+    audit(db, admin, "operator_password", f"«{op.username}» operatoru üçün yeni parol təyin edildi.")
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/operators/{op_id}")
+def delete_operator(op_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    op = _get_operator(db, op_id)
+    audit(db, admin, "operator_delete", f"Operator hesabı silindi: «{op.username}».")
+    db.execute(delete(SessionToken).where(SessionToken.user_id == op.id))
+    db.delete(op)
+    db.commit()
+    return {"ok": True}

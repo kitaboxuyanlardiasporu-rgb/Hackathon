@@ -81,3 +81,15 @@ class ContestStatusIn(BaseModel):
 
 class ContestDeleteIn(BaseModel):
     confirm_name: str
+
+
+class OperatorCreateIn(BaseModel):
+    username: str
+    password: str
+    permissions: list[str] = []
+
+
+class OperatorUpdateIn(BaseModel):
+    username: str
+    permissions: list[str]
+    version: StrictInt

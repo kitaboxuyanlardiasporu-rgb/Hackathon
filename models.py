@@ -51,7 +51,7 @@ class Contest(Base):
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
-        CheckConstraint("role IN ('admin','jury')", name="ck_users_role"),
+        CheckConstraint("role IN ('admin','operator','jury')", name="ck_users_role"),
         Index("uq_users_username_lower", func.lower(text("username")), unique=True),
     )
 
@@ -59,7 +59,9 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(10), nullable=False)
-    # Jüri bir müsabiqəyə aiddir; admin üçün boşdur.
+    # Operatorun icazələri (məs. ["contests", "juries"]); digər rollar üçün boş.
+    permissions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    # Jüri bir müsabiqəyə aiddir; admin və operator üçün boşdur.
     contest_id: Mapped[int | None] = mapped_column(
         ForeignKey("contest.id", ondelete="CASCADE"), nullable=True, index=True
     )

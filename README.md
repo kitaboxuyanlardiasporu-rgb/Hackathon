@@ -5,9 +5,9 @@ Texniki baza: **FastAPI** (backend), **PostgreSQL** (verilənlər bazası) və a
 
 ## Nə hazırdır
 
-- **Bir neçə müsabiqə:** admin **Müsabiqələr** bölməsində yeni müsabiqə yaradır, yan menyudakı seçici ilə müsabiqələr arasında keçir və köhnə müsabiqəni həmişəlik silir. Silmədən əvvəl müsabiqənin adı yazılaraq təsdiqlənir və nəticələri CSV kimi yükləmək təklif olunur. Sonuncu müsabiqəni silmək olmur.
+- **Bir neçə müsabiqə:** admin **Müsabiqələr** bölməsində yeni müsabiqə yaradır, yan menyudakı seçici ilə müsabiqələr arasında keçir və köhnə müsabiqəni həmişəlik silir. Silmədən əvvəl müsabiqənin adı yazılaraq təsdiqlənir və nəticələri CSV kimi yükləmək təklif olunur. Sonuncu müsabiqəni də silmək olar; o zaman admin yeni müsabiqə yaradır.
 - **Qiymətləndirməni açmaq və bağlamaq:** hər müsabiqə üçün ayrıca idarə olunur və bir neçə müsabiqə eyni vaxtda açıq ola bilər. Bağlı müsabiqədə jüri yeni bal təsdiqləyə bilmir, amma təsdiqlənmiş balları saxlanılır. Yeni müsabiqə bağlı vəziyyətdə yaradılır.
-- **Jürilər:** hər müsabiqənin öz jüri hesabları var. İstifadəçi adı bütün portal üzrə unikaldır. Müsabiqə silinəndə onun jüri hesabları da silinir.
+- **Jürilər:** hər müsabiqənin öz jüri hesabları var. İstifadəçi adı bütün portal üzrə unikaldır. Müsabiqə silinəndə onun jüri hesabları da silinir. Təsdiqlənmiş balı olan jürini də silmək olar: istifadəçi adını yazıb təsdiqləyəndə hesab balları ilə birlikdə silinir, silinən ballar isə tarixçədə saxlanılır.
 
 - **Giriş:** admin və jüri eyni səhifədən daxil olur. Sessiya HttpOnly cookie ilə saxlanılır. Parollar scrypt ilə, duzlanmış heş kimi saxlanılır. Uğursuz giriş cəhdləri limitlənir.
 - **Qiymətləndirmə tipləri:**

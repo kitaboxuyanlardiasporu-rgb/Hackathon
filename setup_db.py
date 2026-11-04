@@ -65,6 +65,15 @@ _MIGRATIONS = [
     *_add_contest_fk("users", nullable=True, jury_only=True),
     "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS contest_id INTEGER",
     "CREATE INDEX IF NOT EXISTS ix_audit_log_contest_id ON audit_log (contest_id)",
+    # --- v4: operator rolu
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_users_role'
+                        AND pg_get_constraintdef(oid) LIKE '%operator%') THEN
+           ALTER TABLE users DROP CONSTRAINT IF EXISTS ck_users_role;
+           ALTER TABLE users ADD CONSTRAINT ck_users_role CHECK (role IN ('admin','operator','jury'));
+         END IF;
+       END $$""",
     # Artıq bal verilmiş müsabiqənin strukturu kilidli olmalıdır.
     "UPDATE contest c SET structure_locked = true, locked_at = COALESCE(locked_at, now()) "
     "WHERE structure_locked = false AND EXISTS (SELECT 1 FROM evaluations e WHERE e.contest_id = c.id)",
@@ -72,19 +81,31 @@ _MIGRATIONS = [
 
 
 def init_db() -> None:
-    # Bir neçə proses eyni vaxtda başlasa, miqrasiyanı ardıcıl icra edirik.
-    with engine.begin() as conn:
-        conn.execute(text("SELECT pg_advisory_xact_lock(724501)"))
-        Base.metadata.create_all(conn)
-        for stmt in _MIGRATIONS:
-            conn.execute(text(stmt))
+    """Miqrasiya və ilkin məlumatlar bir sessiya səviyyəli kilid altında icra olunur.
 
-    with SessionLocal() as db:
-        db.execute(text("SELECT pg_advisory_xact_lock(724502)"))
-        if not db.scalar(select(func.count(Contest.id))):
-            create_contest(db, "Müsabiqə", "unique", None, seed=settings.seed_demo, is_open=True)
-        bootstrap_admin(db)
-        db.commit()
+    Bir neçə server prosesi eyni anda başlasa, yalnız biri bazanı hazırlayır,
+    digərləri gözləyir. Bu, cədvəl kilidləri arasında qarşılıqlı bloklanmanın
+    (deadlock) qarşısını alır.
+    """
+    with engine.connect() as lock_conn:
+        lock_conn.execute(text("SELECT pg_advisory_lock(724501)"))
+        try:
+            with engine.begin() as conn:
+                Base.metadata.create_all(conn)
+                for stmt in _MIGRATIONS:
+                    conn.execute(text(stmt))
+
+            with SessionLocal() as db:
+                # Nümunə müsabiqə yalnız ilk quraşdırmada yaradılır (hələ admin yoxdursa).
+                # Admin bütün müsabiqələri silibsə, yenidən başladıqda avtomatik yaradılmır.
+                fresh = not db.scalar(select(func.count(User.id)).where(User.role == "admin"))
+                if fresh and not db.scalar(select(func.count(Contest.id))):
+                    create_contest(db, "Müsabiqə", "unique", None, seed=settings.seed_demo, is_open=True)
+                bootstrap_admin(db)
+                db.commit()
+        finally:
+            lock_conn.execute(text("SELECT pg_advisory_unlock(724501)"))
+            lock_conn.commit()
 
 
 def create_contest(db, name: str, eval_type: str, custom_max: int | None, *, seed: bool,

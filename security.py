@@ -190,3 +190,41 @@ def reset_throttle(db: Session, key: str) -> None:
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+# ---------------------------------------------------------------- operator icazələri
+# Admin hər operatora bu icazələrdən istədiyini verir. Admin hamısına malikdir.
+PERMISSIONS = {
+    "contests": "Müsabiqə yaratmaq və ayarlamaq",
+    "juries": "Jüri əlavə etmək",
+    "teams": "Komandaları müəyyənləşdirmək",
+    "criteria": "Meyarları müəyyənləşdirmək",
+}
+NO_PERM = "Bu əməliyyat üçün icazəniz yoxdur. Adminə müraciət edin."
+
+
+def user_perms(user: User) -> list[str]:
+    if user.role == "admin":
+        return list(PERMISSIONS)
+    if user.role == "operator":
+        return [p for p in (user.permissions or []) if p in PERMISSIONS]
+    return []
+
+
+def require_staff(user: User = Depends(current_user)) -> User:
+    """Admin və ya operator."""
+    if user.role not in ("admin", "operator"):
+        raise HTTPException(403, "Bu əməliyyat üçün icazəniz yoxdur.")
+    return user
+
+
+def require_perm(perm: str):
+    assert perm in PERMISSIONS
+
+    def dep(user: User = Depends(require_staff)) -> User:
+        if user.role != "admin" and perm not in user_perms(user):
+            raise HTTPException(403, NO_PERM)
+        return user
+
+    dep.__name__ = f"require_perm_{perm}"
+    return dep

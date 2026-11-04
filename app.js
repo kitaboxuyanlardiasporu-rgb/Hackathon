@@ -36,6 +36,7 @@ const PATHS = {
   history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/>',
+  shield: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.3 7.5 9.5 4.3-1.2 7.5-4.9 7.5-9.5V6L12 3z"/><path d="M9 12l2 2 4-4"/>',
   layers: '<path d="M12 3 2.5 8 12 13l9.5-5L12 3z"/><path d="M2.5 12.5 12 17.5l9.5-5"/><path d="M2.5 16.5 12 21.5l9.5-5"/>',
   play: '<path d="M7 5l12 7-12 7V5z"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
@@ -269,6 +270,7 @@ function renderLogin(errorMsg = "") {
 async function logout() {
   try { await api("POST", "/api/auth/logout"); } catch { /* */ }
   ME = null;
+  document.getElementById("toasts").innerHTML = "";
   renderLogin();
 }
 
@@ -286,8 +288,12 @@ async function boot() {
   }
 }
 
+const isAdmin = () => ME && ME.role === "admin";
+const can = (perm) => isAdmin() || !!(ME && ME.role === "operator" && (ME.permissions || []).includes(perm));
+const ROLE_LABEL = { admin: "Admin", operator: "Operator", jury: "Jüri" };
+
 function startApp() {
-  if (ME.role === "admin") AdminApp.start();
+  if (ME.role === "admin" || ME.role === "operator") AdminApp.start();
   else JuryApp.start();
 }
 
@@ -298,14 +304,16 @@ const ADM = () => `/api/admin/contests/${CUR}`;
 const SECTIONS = [
   { id: "musabiqeler", title: "Müsabiqələr", icon: "layers", global: true },
   { id: "icmal", title: "İcmal", icon: "grid" },
-  { id: "ayarlar", title: "Müsabiqə ayarları", icon: "sliders" },
-  { id: "komandalar", title: "Komandalar", icon: "users" },
-  { id: "meyarlar", title: "Meyarlar", icon: "list" },
-  { id: "juriler", title: "Jürilər", icon: "userCheck" },
-  { id: "qiymetlendirmeler", title: "Qiymətləndirmələr", icon: "clipboard" },
-  { id: "neticeler", title: "Nəticələr", icon: "trophy" },
-  { id: "tarixce", title: "Tarixçə", icon: "history" },
+  { id: "ayarlar", title: "Müsabiqə ayarları", icon: "sliders", perm: "contests" },
+  { id: "komandalar", title: "Komandalar", icon: "users", perm: "teams" },
+  { id: "meyarlar", title: "Meyarlar", icon: "list", perm: "criteria" },
+  { id: "juriler", title: "Jürilər", icon: "userCheck", perm: "juries" },
+  { id: "qiymetlendirmeler", title: "Qiymətləndirmələr", icon: "clipboard", admin: true },
+  { id: "neticeler", title: "Nəticələr", icon: "trophy", admin: true },
+  { id: "tarixce", title: "Tarixçə", icon: "history", admin: true },
+  { id: "operatorlar", title: "Operatorlar", icon: "shield", admin: true, global: true },
 ];
+const allowed = (sec) => (sec.admin ? isAdmin() : sec.perm ? can(sec.perm) : true);
 
 const TYPE_HELP = {
   unique: {
@@ -345,17 +353,16 @@ const AdminApp = {
             <label for="contest-select">Seçilmiş müsabiqə</label>
             <select id="contest-select"></select>
           </div>
-          <nav class="nav">
-            ${SECTIONS.map((s) => `<a href="#/${s.id}" data-nav="${s.id}">${icon(s.icon)}<span>${s.title}</span></a>`).join("")}
-          </nav>
+          <nav class="nav" id="nav"></nav>
           <div class="sidebar-foot">
-            <div class="who">Admin<strong>${esc(ME.username)}</strong></div>
+            <div class="who">${ROLE_LABEL[ME.role]}<strong>${esc(ME.username)}</strong></div>
             <a class="btn btn-ghost" href="#/hesab" data-nav="hesab">${icon("key")} Parolu dəyiş</a>
             <button class="btn btn-ghost" id="logout-btn">${icon("logout")} Çıxış</button>
           </div>
         </aside>
         <main class="main" id="main" tabindex="-1"></main>
       </div>`;
+    this.renderNav();
     const sb = $("#sidebar"), scrim = $("#scrim"), mb = $("#menu-btn");
     const setMenu = (open) => {
       sb.classList.toggle("open", open);
@@ -377,6 +384,19 @@ const AdminApp = {
     window.onhashchange = () => this.route();
     this.route();
   },
+  renderNav() {
+    const nav = $("#nav");
+    if (!nav) return;
+    this._navKey = (ME.permissions || []).join(",");
+    nav.innerHTML = SECTIONS.filter(allowed)
+      .map((s) => `<a href="#/${s.id}" data-nav="${s.id}" ${s.id === this.section ? 'aria-current="page"' : ""}>${icon(s.icon)}<span>${s.title}</span></a>`).join("");
+  },
+  async refreshMe() {
+    // Admin icazələri dəyişibsə, menyu dərhal yenilənir.
+    const r = await api("GET", "/api/auth/me");
+    ME = r.user;
+    if ((ME.permissions || []).join(",") !== this._navKey) this.renderNav();
+  },
   contests: [],
   current() { return this.contests.find((c) => c.id === CUR); },
   select(id) {
@@ -391,13 +411,19 @@ const AdminApp = {
     const saved = store.get("qp_cur_contest");
     const prev = CUR;
     const ids = this.contests.map((c) => c.id);
-    let next = ids.includes(CUR) ? CUR : ids.includes(saved) ? saved : ids[0] ?? null;
+    // Seçim yoxdursa, ilk açıq müsabiqə (yoxdursa ən yenisi) seçilir.
+    const firstOpen = this.contests.find((c) => c.is_open)?.id;
+    let next = ids.includes(CUR) ? CUR : ids.includes(saved) ? saved : firstOpen ?? ids[0] ?? null;
     if (prev && !ids.includes(prev)) toast("Seçilmiş müsabiqə artıq mövcud deyil. Başqa müsabiqə seçildi.", "info");
     const sel = $("#contest-select");
     if (sel) {
-      sel.innerHTML = this.contests.map((c) => `<option value="${c.id}">${esc(c.name)} — ${c.is_open ? "açıq" : "bağlı"}</option>`).join("");
+      sel.innerHTML = this.contests.length
+        ? this.contests.map((c) => `<option value="${c.id}">${esc(c.name)} — ${c.is_open ? "açıq" : "bağlı"}</option>`).join("")
+        : `<option value="">— Müsabiqə yoxdur —</option>`;
+      sel.disabled = !this.contests.length;
     }
     if (next !== null) this.select(next);
+    else { CUR = null; store.del("qp_cur_contest"); }
   },
   contestBar() {
     const c = this.current();
@@ -412,8 +438,8 @@ const AdminApp = {
           ? `<span class="chip chip-ok">${icon("play")} Qiymətləndirmə açıqdır</span>`
           : `<span class="chip chip-muted">${icon("stop")} Qiymətləndirmə bağlıdır</span>`}
         <div class="spacer"></div>
-        <button class="btn ${c.is_open ? "btn-secondary" : "btn-primary"} btn-sm" data-toggle-open="${c.id}">
-          ${c.is_open ? `${icon("stop", "sm")} Qiymətləndirməni bağla` : `${icon("play", "sm")} Qiymətləndirməni aç`}</button>
+        ${isAdmin() ? `<button class="btn ${c.is_open ? "btn-secondary" : "btn-primary"} btn-sm" data-toggle-open="${c.id}">
+          ${c.is_open ? `${icon("stop", "sm")} Qiymətləndirməni bağla` : `${icon("play", "sm")} Qiymətləndirməni aç`}</button>` : ""}
       </div>`;
   },
   async toggleOpen(id) {
@@ -431,9 +457,12 @@ const AdminApp = {
     if (ok) { toast(open ? "Qiymətləndirmə açıldı." : "Qiymətləndirmə bağlandı."); this.route(); }
   },
   route() {
-    if (!ME || ME.role !== "admin") return;
+    if (!ME || (ME.role !== "admin" && ME.role !== "operator")) return;
     let id = (location.hash.replace(/^#\/?/, "") || "icmal").split("?")[0];
-    if (!SECTIONS.some((s) => s.id === id) && id !== "hesab") id = "icmal";
+    if (!SECTIONS.some((s) => s.id === id && allowed(s)) && id !== "hesab") {
+      if (location.hash && location.hash !== "#/icmal") history.replaceState(null, "", "#/icmal");
+      id = "icmal";
+    }
     this.section = id;
     $$("[data-nav]").forEach((a) => { if (a.dataset.nav === id) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
     const sec = SECTIONS.find((s) => s.id === id);
@@ -448,8 +477,9 @@ const AdminApp = {
       main.innerHTML = errorBox(err.message);
       $("[data-retry]", main)?.addEventListener("click", () => this.route());
     };
-    this.loadContests().then(() => {
+    Promise.all([this.loadContests(), ME.role === "operator" ? this.refreshMe() : null]).then(() => {
       if (token !== this._token) return;
+      if (sec && !allowed(sec)) { toast("Bu bölmə üçün icazəniz yoxdur.", "error"); location.hash = "#/icmal"; return; }
       const scoped = !(sec && sec.global) && id !== "hesab";
       if (scoped && CUR === null) { location.hash = "#/musabiqeler"; return; }
       main.innerHTML = `${scoped ? this.contestBar() : ""}<div id="view">${loadingBox()}</div>`;
@@ -483,9 +513,9 @@ const Views = {
   musabiqeler(main) {
     const list = AdminApp.contests;
     main.innerHTML = `
-      ${pageHead("Müsabiqələr", "Yeni müsabiqə yaradın, seçin, qiymətləndirməni açın və ya bağlayın.")}
+      ${pageHead("Müsabiqələr", isAdmin() ? "Yeni müsabiqə yaradın, seçin, qiymətləndirməni açın və ya bağlayın." : "Müsabiqəni seçin və icazəniz olan bölmələrdə işləyin.")}
       <div class="stack">
-        <form class="card stack enter" id="new-contest" novalidate>
+        ${can("contests") ? `<form class="card stack enter" id="new-contest" novalidate>
           <h2>Yeni müsabiqə</h2>
           <div class="field"><label for="nc-name">Müsabiqənin adı</label>
             <input class="input" id="nc-name" maxlength="200" required></div>
@@ -512,7 +542,7 @@ const Views = {
           <p class="hint">Yeni müsabiqə <strong>bağlı</strong> vəziyyətdə yaradılır. Komanda, meyar və jüriləri hazırladıqdan sonra qiymətləndirməni açın. Jüri hesabları hər müsabiqə üçün ayrıca yaradılır.</p>
           <div id="nc-err" role="alert"></div>
           <div><button class="btn btn-primary" type="submit">${icon("plus")} Müsabiqə yarat</button></div>
-        </form>
+        </form>` : ""}
         <div class="stack-sm">
           <h2>Bütün müsabiqələr <span class="muted num" style="font-weight:500">(${list.length})</span></h2>
           ${list.length ? `<div class="contest-list">${list.map((c) => `
@@ -531,16 +561,17 @@ const Views = {
               <div class="progress sm" data-cp="${c.id}" role="progressbar" aria-label="${esc(c.name)} irəliləyişi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.progress.percent}"><span></span></div>
               <div class="row" style="gap:6px">
                 ${c.id !== CUR ? `<button class="btn btn-secondary btn-sm" data-pick="${c.id}">Seç</button>` : `<a class="btn btn-secondary btn-sm" href="#/icmal">İcmala keç</a>`}
-                <button class="btn btn-ghost btn-sm" data-toggle-open="${c.id}">${c.is_open ? `${icon("stop", "sm")} Bağla` : `${icon("play", "sm")} Aç`}</button>
+                ${isAdmin() ? `<button class="btn btn-ghost btn-sm" data-toggle-open="${c.id}">${c.is_open ? `${icon("stop", "sm")} Bağla` : `${icon("play", "sm")} Aç`}</button>
                 <div class="spacer"></div>
-                <button class="btn btn-danger-ghost btn-sm" data-del-contest="${c.id}" ${list.length <= 1 ? 'disabled title="Ən azı bir müsabiqə qalmalıdır"' : ""}>${icon("trash", "sm")} Sil</button>
+                <button class="btn btn-danger-ghost btn-sm" data-del-contest="${c.id}">${icon("trash", "sm")} Sil</button>` : ""}
               </div>
-            </article>`).join("")}</div>` : `<div class="card empty">${icon("layers")}<p>Hələ müsabiqə yoxdur.</p></div>`}
+            </article>`).join("")}</div>` : `<div class="card empty">${icon("layers")}<p>Hələ müsabiqə yoxdur. Yuxarıdakı formadan yeni müsabiqə yaradın.</p></div>`}
         </div>
       </div>`;
     list.forEach((c) => setProgress($(`[data-cp="${c.id}"]`, main), c.progress.percent));
 
     const form = $("#new-contest");
+    if (form) {
     const syncForm = () => {
       const t = $("input[name=nc-type]:checked", form).value;
       $("#nc-max-field").classList.toggle("hidden", t !== "custom");
@@ -578,6 +609,7 @@ const Views = {
         location.hash = "#/icmal";
       } catch (er) { setBusy(btn, false); fail(er.message); }
     });
+    }
 
     main.onclick = async (e) => {
       const pick = e.target.closest("[data-pick]"), tog = e.target.closest("[data-toggle-open]"), del = e.target.closest("[data-del-contest]");
@@ -611,7 +643,11 @@ const Views = {
           },
           onConfirm: (dl) => api("POST", `/api/admin/contests/${c.id}/delete`, { confirm_name: $("#del-name", dl).value.trim() }),
         });
-        if (ok) { toast(`«${c.name}» silindi.`); AdminApp.route(); }
+        if (ok) {
+          if (c.id === CUR) { CUR = null; store.del("qp_cur_contest"); }
+          toast(`«${c.name}» silindi.`);
+          AdminApp.route();
+        }
       }
     };
   },
@@ -635,7 +671,7 @@ const Views = {
             <span class="muted">${p.completed} / ${p.expected} təsdiqlənmiş qiymətləndirmə</span></div>
           <div class="progress" id="ov-progress" role="progressbar" aria-label="Ümumi irəliləyiş" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.percent}"><span></span></div>
           <p class="hint">Gözlənilən qiymətləndirmə sayı: komanda sayı × jüri sayı = ${p.teams} × ${p.juries} = ${p.expected}. Bir jürinin bir komandanı bütün meyarlar üzrə təsdiqləməsi bir qiymətləndirmə sayılır.</p>
-          ${p.juries === 0 ? `<div class="alert alert-warn">${icon("alert")}<div>Jüri hesabı yoxdur. Nəticələr yekun hesab edilmir. <a href="#/juriler">Jüri əlavə edin</a>.</div></div>` : ""}
+          ${p.juries === 0 ? `<div class="alert alert-warn">${icon("alert")}<div>Jüri hesabı yoxdur. Nəticələr yekun hesab edilmir.${can("juries") ? ' <a href="#/juriler">Jüri əlavə edin</a>.' : ""}</div></div>` : ""}
         </div>
         <div class="card enter stack">
           <h2>Jürilər üzrə irəliləyiş</h2>
@@ -765,7 +801,7 @@ const Views = {
                 <td class="num"><div class="row" style="justify-content:flex-end;gap:4px;flex-wrap:nowrap">
                   <button class="btn btn-ghost btn-sm" data-rename="${j.id}">${icon("edit", "sm")} Adı dəyiş</button>
                   <button class="btn btn-ghost btn-sm" data-pass="${j.id}">${icon("key", "sm")} Yeni parol</button>
-                  <button class="btn btn-danger-ghost btn-sm btn-icon" data-del="${j.id}" aria-label="${esc(j.username)} hesabını sil">${icon("trash", "sm")}</button>
+                  ${j.completed > 0 && !isAdmin() ? "" : `<button class="btn btn-danger-ghost btn-sm btn-icon" data-del="${j.id}" aria-label="${esc(j.username)} hesabını sil">${icon("trash", "sm")}</button>`}
                 </div></td>
               </tr>`).join("")}</tbody>
           </table>
@@ -818,13 +854,26 @@ const Views = {
         if (ok) toast("Yeni parol təyin edildi.");
       } else if (del) {
         const j = byId[del.dataset.del];
+        const hasScores = j.completed > 0;
         const ok = await modal({
           title: "Jüri hesabını sil",
-          body: `<p><strong>${esc(j.username)}</strong> hesabı silinəcək. Bu əməliyyatı geri qaytarmaq mümkün deyil.</p>`,
-          confirmText: "Sil", danger: true,
-          onConfirm: () => api("DELETE", `${ADM()}/juries/${j.id}`),
+          body: hasScores ? `
+            <p><strong>${esc(j.username)}</strong> hesabı silinəcək.</p>
+            <div class="alert alert-error">${icon("alert")}<div>Bu jürinin <strong>${j.completed}</strong> komanda üzrə təsdiqlənmiş balları da silinəcək və nəticələrdən çıxarılacaq. Bu əməliyyat geri qaytarılmır. Silinən ballar tarixçədə saxlanılır.</div></div>
+            <div class="field"><label for="del-jury">Təsdiq üçün istifadəçi adını yazın: <strong>${esc(j.username)}</strong></label>
+              <input class="input" id="del-jury" autocomplete="off" autocapitalize="none" spellcheck="false"></div>`
+            : `<p><strong>${esc(j.username)}</strong> hesabı silinəcək. Bu jürinin təsdiqlənmiş balı yoxdur.</p>`,
+          confirmText: hasScores ? "Ballarla birlikdə sil" : "Sil", danger: true,
+          onOpen: (dl) => {
+            if (!hasScores) return;
+            const okb = $("[data-ok]", dl), inp = $("#del-jury", dl);
+            okb.disabled = true;
+            inp.addEventListener("input", () => { okb.disabled = inp.value.trim() !== j.username; });
+            inp.focus();
+          },
+          onConfirm: () => api("DELETE", `${ADM()}/juries/${j.id}${hasScores ? "?with_scores=true" : ""}`),
         });
-        if (ok) { toast("Jüri hesabı silindi."); AdminApp.refresh(); }
+        if (ok) { toast(hasScores ? "Jüri hesabı balları ilə birlikdə silindi." : "Jüri hesabı silindi."); AdminApp.refresh(); }
       }
     };
   },
@@ -894,7 +943,7 @@ const Views = {
     main.innerHTML = `
       ${pageHead("Tarixçə", "Bütün vaxtlar Bakı vaxtı ilə göstərilir.")}
       <div class="stack">
-        <label class="row" style="gap:8px;min-height:44px;cursor:pointer"><input type="checkbox" id="only-admin" ${onlyAdmin ? "checked" : ""} style="width:20px;height:20px"> Yalnız admin əməliyyatları</label>
+        <label class="row" style="gap:8px;min-height:44px;cursor:pointer"><input type="checkbox" id="only-admin" ${onlyAdmin ? "checked" : ""} style="width:20px;height:20px"> Yalnız admin və operator əməliyyatları</label>
         <div class="card" style="padding:0" id="audit-list">${loadingBox()}</div>
         <div><button class="btn btn-secondary hidden" id="audit-more">Daha çox göstər</button></div>
       </div>`;
@@ -918,6 +967,103 @@ const Views = {
     $("#only-admin").addEventListener("change", (e) => { onlyAdmin = e.target.checked; store.set("qp_audit_admin", onlyAdmin); load(true); });
     more.addEventListener("click", () => load(false));
     await load(true);
+  },
+
+  // ------------------------------------------------------------ Operatorlar
+  async operatorlar(main) {
+    const d = await api("GET", "/api/admin/operators");
+    const P = d.permissions;
+    const permBoxes = (prefix, selected = []) => `
+      <fieldset class="perm-grid">
+        <legend class="label">İcazələr</legend>
+        ${P.map((p) => `<label class="perm-opt"><input type="checkbox" name="${prefix}-perm" value="${p.key}" ${selected.includes(p.key) ? "checked" : ""}><span>${esc(p.label)}</span></label>`).join("")}
+      </fieldset>`;
+    const chips = (perms) => perms.length
+      ? perms.map((k) => `<span class="chip chip-info">${icon("check")} ${esc(P.find((p) => p.key === k)?.label || k)}</span>`).join(" ")
+      : `<span class="chip chip-muted">İcazə verilməyib</span>`;
+    main.innerHTML = `
+      ${pageHead("Operatorlar", "Operator yalnız sizin verdiyiniz icazələr daxilində işləyir. Müsabiqəni silmək, qiymətləndirməni açıb-bağlamaq, balları redaktə etmək, nəticələr və tarixçə yalnız adminə məxsusdur.")}
+      <div class="stack">
+        <form class="card stack enter" id="op-form" novalidate>
+          <h2>Yeni operator</h2>
+          <div class="form-row">
+            <div class="field"><label for="op-user">İstifadəçi adı</label>
+              <input class="input" id="op-user" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="50"></div>
+            ${pwField("op-pass", "Parol", { hint: "Ən azı 8 simvol." })}
+          </div>
+          ${permBoxes("new", ["contests", "juries", "teams", "criteria"])}
+          <div id="op-err" role="alert"></div>
+          <div><button class="btn btn-primary" type="submit">${icon("plus")} Operator yarat</button></div>
+        </form>
+        ${d.items.length ? `<div class="contest-list">${d.items.map((o) => `
+          <article class="card contest-item enter">
+            <div class="row" style="gap:8px"><span class="brand-mark" style="width:34px;height:34px;border-radius:9px">${icon("shield")}</span>
+              <h3 style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(o.username)}</h3></div>
+            <div class="row" style="gap:6px">${chips(o.permissions)}</div>
+            <div class="row" style="gap:6px">
+              <button class="btn btn-secondary btn-sm" data-op-edit="${o.id}">${icon("edit", "sm")} İcazələr və ad</button>
+              <button class="btn btn-ghost btn-sm" data-op-pass="${o.id}">${icon("key", "sm")} Yeni parol</button>
+              <div class="spacer"></div>
+              <button class="btn btn-danger-ghost btn-sm btn-icon" data-op-del="${o.id}" aria-label="${esc(o.username)} operatorunu sil">${icon("trash", "sm")}</button>
+            </div>
+          </article>`).join("")}</div>` : `<div class="card empty">${icon("shield")}<p>Hələ operator yoxdur.</p></div>`}
+      </div>`;
+    const byId = Object.fromEntries(d.items.map((o) => [o.id, o]));
+    const checked = (root, prefix) => $$(`input[name=${prefix}-perm]:checked`, root).map((i) => i.value);
+    $("#op-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errEl = $("#op-err");
+      const fail = (m, el) => { errEl.innerHTML = `<div class="alert alert-error">${icon("alert")}<div>${esc(m)}</div></div>`; el?.focus(); };
+      errEl.innerHTML = "";
+      const username = $("#op-user").value.trim(), password = $("#op-pass").value;
+      if (!/^[\p{L}\p{N}_.\-]{3,50}$/u.test(username)) return fail("İstifadəçi adı 3–50 simvol olmalı, yalnız hərf, rəqəm, nöqtə, defis və alt xətt içərməlidir.", $("#op-user"));
+      if (password.length < 8) return fail("Parol ən azı 8 simvoldan ibarət olmalıdır.", $("#op-pass"));
+      const btn = $("button[type=submit]", e.target);
+      setBusy(btn, true, "Yaradılır…");
+      try {
+        await api("POST", "/api/admin/operators", { username, password, permissions: checked(e.target, "new") });
+        toast(`«${username}» operatoru yaradıldı.`);
+        AdminApp.refresh();
+      } catch (er) { setBusy(btn, false); fail(er.message); }
+    });
+    main.onclick = async (e) => {
+      const ed = e.target.closest("[data-op-edit]"), pw = e.target.closest("[data-op-pass]"), del = e.target.closest("[data-op-del]");
+      if (ed) {
+        const o = byId[ed.dataset.opEdit];
+        const ok = await modal({
+          title: `Operator: ${o.username}`,
+          body: `<div class="field"><label for="m-op-user">İstifadəçi adı</label><input class="input" id="m-op-user" maxlength="50" value="${esc(o.username)}" autocapitalize="none" spellcheck="false"></div>
+                 ${permBoxes("edit", o.permissions)}
+                 <p class="hint">Dəyişiklik dərhal qüvvəyə minir, operatorun yenidən daxil olmasına ehtiyac yoxdur.</p>`,
+          confirmText: "Yadda saxla",
+          onConfirm: (dl) => api("PATCH", `/api/admin/operators/${o.id}`, { username: $("#m-op-user", dl).value.trim(), permissions: checked(dl, "edit"), version: o.version }),
+        });
+        if (ok) { toast("Operator yeniləndi."); AdminApp.refresh(); }
+      } else if (pw) {
+        const o = byId[pw.dataset.opPass];
+        const ok = await modal({
+          title: `Yeni parol: ${o.username}`,
+          body: pwField("m-op-pass", "Yeni parol", { hint: "Ən azı 8 simvol. Operatorun aktiv sessiyaları bağlanacaq." }),
+          confirmText: "Parolu təyin et",
+          onOpen: (dl) => $("#m-op-pass", dl).focus(),
+          onConfirm: (dl) => {
+            const v = $("#m-op-pass", dl).value;
+            if (v.length < 8) throw new Error("Parol ən azı 8 simvoldan ibarət olmalıdır.");
+            return api("POST", `/api/admin/operators/${o.id}/password`, { password: v });
+          },
+        });
+        if (ok) toast("Yeni parol təyin edildi.");
+      } else if (del) {
+        const o = byId[del.dataset.opDel];
+        const ok = await modal({
+          title: "Operator silinsin?",
+          body: `<p><strong>${esc(o.username)}</strong> hesabı silinəcək və onun aktiv sessiyaları bağlanacaq. Operatorun yaratdığı müsabiqələr, komandalar və jürilər qalır.</p>`,
+          confirmText: "Sil", danger: true,
+          onConfirm: () => api("DELETE", `/api/admin/operators/${o.id}`),
+        });
+        if (ok) { toast("Operator silindi."); AdminApp.refresh(); }
+      }
+    };
   },
 
   // ------------------------------------------------------------ Hesab
@@ -964,12 +1110,16 @@ function auditItem(a) {
     const sc = dd.deleted_scores || dd.scores;
     details = `<details><summary>${a.action === "evaluation_unlock" ? "Silinmiş ballar" : "Ballar"}</summary>
       <table><tbody>${Object.entries(sc).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num"><strong>${esc(v)}</strong></td></tr>`).join("")}</tbody></table></details>`;
-  } else if (a.action === "contest_update" && dd.changes) {
+  } else if (a.action === "jury_delete" && dd.deleted) {
+    details = `<details><summary>Silinmiş ballar</summary>
+      <table><thead><tr><th>Komanda</th><th>Ballar</th></tr></thead><tbody>${Object.entries(dd.deleted).map(([t, sc]) =>
+        `<tr><td>${esc(t)}</td><td>${Object.entries(sc).map(([k, v]) => `${esc(k)}: <strong>${esc(v)}</strong>`).join(" · ")}</td></tr>`).join("")}</tbody></table></details>`;
+  } else if ((a.action === "contest_update" || a.action === "operator_update") && dd.changes) {
     details = `<details><summary>Dəyişiklikləri göstər</summary>
       <table><tbody>${Object.entries(dd.changes).map(([k, [o, n]]) => `<tr><td>${esc(k)}</td><td><span class="diff-old">${esc(o)}</span> → <span class="diff-new">${esc(n)}</span></td></tr>`).join("")}</tbody></table></details>`;
   }
   return `<div class="audit-item"><time datetime="${esc(a.at)}">${esc(fmtTime(a.at))}</time>
-    <div><div>${esc(a.summary)}</div><div class="who">${esc(a.actor)} · ${a.role === "admin" ? "admin" : "jüri"}</div></div>${details}</div>`;
+    <div><div>${esc(a.summary)}</div><div class="who">${esc(a.actor)} · ${(ROLE_LABEL[a.role] || a.role).toLowerCase()}</div></div>${details}</div>`;
 }
 
 // ------------------------------------------------------------ Komanda/Meyar ümumi görünüşü

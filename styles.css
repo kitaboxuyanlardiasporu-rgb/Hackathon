@@ -383,3 +383,12 @@ tbody th { font-size: .93rem; }
 .contest-item.is-current { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12), var(--shadow); }
 .contest-meta { display: flex; flex-direction: column; gap: 2px; }
 .sidebar { overflow-y: auto; overscroll-behavior: contain; }
+
+/* ------------------------------------------------ operator icazələri */
+.perm-grid { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.perm-grid legend { margin-bottom: 8px; }
+.perm-opt { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 12px; border: 1.5px solid var(--line-strong); border-radius: 10px; cursor: pointer; background: #fff; transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease); }
+.perm-opt:hover { border-color: #93B4F5; }
+.perm-opt input { width: 20px; height: 20px; accent-color: var(--blue); flex: none; }
+.perm-opt:has(input:checked) { border-color: var(--blue); background: var(--blue-50); }
+.perm-opt span { font-weight: 500; font-size: .93rem; }

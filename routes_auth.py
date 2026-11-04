@@ -17,7 +17,8 @@ from .security import (
     delete_session,
     hash_password,
     register_failure,
-    require_admin,
+    require_staff,
+    user_perms,
     reset_throttle,
     set_session_cookie,
     validate_password,
@@ -31,7 +32,8 @@ BAD_LOGIN = "İstifadəçi adı və ya parol yanlışdır."
 
 
 def user_payload(u: User) -> dict:
-    return {"id": u.id, "username": u.username, "role": u.role, "contest_id": u.contest_id}
+    return {"id": u.id, "username": u.username, "role": u.role, "contest_id": u.contest_id,
+            "permissions": user_perms(u)}
 
 
 @router.post("/login")
@@ -75,7 +77,7 @@ def me(user: User = Depends(current_user)):
 def change_own_password(
     body: PasswordChangeIn,
     request: Request,
-    user: User = Depends(require_admin),
+    user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
     if not verify_password(body.current_password, user.password_hash):
@@ -86,6 +88,6 @@ def change_own_password(
     # Digər cihazlardakı sessiyaları bağlayırıq, cari sessiya qalır.
     cur = _token_hash(request.cookies.get(settings.cookie_name, ""))
     db.execute(delete(SessionToken).where(SessionToken.user_id == user.id, SessionToken.token_hash != cur))
-    audit(db, user, "admin_password", "Admin öz parolunu dəyişdi.")
+    audit(db, user, "own_password", f"«{user.username}» öz parolunu dəyişdi.")
     db.commit()
     return {"ok": True}
