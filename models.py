@@ -74,6 +74,18 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ContestAccess(Base):
+    """Adminin operatora başqa müsabiqəyə verdiyi giriş: 'view' (yalnız baxış) və ya 'manage' (icazələrə uyğun idarə)."""
+
+    __tablename__ = "contest_access"
+    __table_args__ = (CheckConstraint("level IN ('view','manage')", name="ck_contest_access_level"),)
+
+    contest_id: Mapped[int] = mapped_column(ForeignKey("contest.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    level: Mapped[str] = mapped_column(String(10), nullable=False, default="view")
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class Team(Base):
     __tablename__ = "teams"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

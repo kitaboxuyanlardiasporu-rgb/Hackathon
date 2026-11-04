@@ -100,3 +100,12 @@ class ContestResetIn(BaseModel):
     juries: bool = False
     teams: bool = False
     criteria: bool = False
+
+
+class ContestGrantIn(BaseModel):
+    contest_id: StrictInt
+    level: Literal["view", "manage"]
+
+
+class OperatorContestsIn(BaseModel):
+    grants: list[ContestGrantIn]

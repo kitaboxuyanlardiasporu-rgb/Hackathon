@@ -5,7 +5,7 @@ Texniki baza: **FastAPI** (backend), **PostgreSQL** (verilənlər bazası) və a
 
 ## Nə hazırdır
 
-- **Operatorlar:** admin **Operatorlar** bölməsində operator yaradır və ona icazələr verir: müsabiqə yaratmaq və ayarlamaq, jüri əlavə etmək, komandaları müəyyənləşdirmək, meyarları müəyyənləşdirmək, qiymətləndirməni açıb-bağlamaq, müsabiqə məlumatlarını sıfırlamaq. Operator **yalnız özünün yaratdığı müsabiqələri** görür. Müsabiqəni silmək, balları redaktə etmək, nəticələr, tarixçə və operatorların idarəsi yalnız admindədir. İcazələr hər sorğuda serverdə yoxlanılır.
+- **Operatorlar:** admin **Operatorlar** bölməsində operator yaradır və ona icazələr verir: müsabiqə yaratmaq və ayarlamaq, jüri əlavə etmək, komandaları müəyyənləşdirmək, meyarları müəyyənləşdirmək, qiymətləndirməni açıb-bağlamaq, müsabiqə məlumatlarını sıfırlamaq. Operator özünün yaratdığı müsabiqələri və admin tərəfindən **giriş verilmiş** müsabiqələri görür. Admin hər operatora istənilən müsabiqəyə **yalnız baxış** (dəyişiklik olmadan) və ya **idarə** (operatorun icazələri daxilində) girişi verə bilər; bu, Operatorlar bölməsindəki "Müsabiqələrə giriş" düyməsi ilə edilir. Müsabiqəni silmək, balları redaktə etmək, nəticələr, tarixçə və operatorların idarəsi yalnız admindədir. İcazələr hər sorğuda serverdə yoxlanılır.
 - **Sıfırlama:** müsabiqənin bütün balları silinir (istəyə görə jürilər, komandalar və meyarlar da), struktur kilidi açılır. Adı yazmaqla təsdiqlənir, silinən ballar tarixçədə qalır.
 - **Jüri ekranı:** hər komanda kartında komandanın altında meyarlar, hər meyar üçün açılan siyahı.
 - **Bir neçə müsabiqə:** admin **Müsabiqələr** bölməsində yeni müsabiqə yaradır, yan menyudakı seçici ilə müsabiqələr arasında keçir və köhnə müsabiqəni həmişəlik silir. Silmədən əvvəl müsabiqənin adı yazılaraq təsdiqlənir və nəticələri CSV kimi yükləmək təklif olunur. Sonuncu müsabiqəni də silmək olar; o zaman admin yeni müsabiqə yaradır.
@@ -85,7 +85,7 @@ pip install -r requirements-dev.txt
 DATABASE_URL=postgresql://USER:PASS@localhost/portal_test pytest -q
 ```
 
-44 avtomatik test aşağıdakıları yoxlayır: hər üç tipin qaydaları, kilidlər, rollar, nəticələrin hesablanması, bərabər balların sıralanması, CSV ixracı, paralel sorğular, miqrasiya, müsabiqələrin bir-birindən ayrılığı, qiymətləndirmənin açılıb-bağlanması və müsabiqənin silinməsi, operator icazələri və sıfırlama.
+49 avtomatik test aşağıdakıları yoxlayır: hər üç tipin qaydaları, kilidlər, rollar, nəticələrin hesablanması, bərabər balların sıralanması, CSV ixracı, paralel sorğular, miqrasiya, müsabiqələrin bir-birindən ayrılığı, qiymətləndirmənin açılıb-bağlanması və müsabiqənin silinməsi, operator icazələri, müsabiqəyə giriş və sıfırlama.
 
 ## Mühit dəyişənləri
 

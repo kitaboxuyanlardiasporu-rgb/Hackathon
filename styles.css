@@ -404,3 +404,11 @@ tbody th { font-size: .93rem; }
 .crit-row select option { color: var(--text); font-weight: 500; }
 .crit-row select option:disabled { color: #9AA8BD; }
 @media (max-width: 380px) { .crit-row { grid-template-columns: 1fr; gap: 6px; } }
+
+/* ------------------------------------------------ operator: müsabiqələrə giriş */
+.access-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; max-height: 50vh; overflow-y: auto; }
+.access-row { display: grid; grid-template-columns: 1fr 170px; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.access-row:last-child { border-bottom: 0; }
+.access-row label { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.access-row select.input { min-height: 42px; padding: 6px 10px; }
+@media (max-width: 480px) { .access-row { grid-template-columns: 1fr; gap: 6px; } }

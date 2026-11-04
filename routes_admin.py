@@ -22,7 +22,7 @@ from .logic import (
     progress,
     team_count,
 )
-from .models import AuditLog, Contest, Criterion, Evaluation, Score, SessionToken, Team, User
+from .models import AuditLog, Contest, ContestAccess, Criterion, Evaluation, Score, SessionToken, Team, User
 from .schemas import (
     ContestCreateIn,
     ContestDeleteIn,
@@ -35,6 +35,7 @@ from .schemas import (
     JuryRenameIn,
     NameIn,
     RenameIn,
+    OperatorContestsIn,
     OperatorCreateIn,
     OperatorUpdateIn,
     UnlockIn,
@@ -43,14 +44,27 @@ from .security import PERMISSIONS, hash_password, require_admin, require_perm, r
 from .setup_db import create_contest
 
 # Admin və operator bu routerə daxil olur; hər endpoint öz icazəsini ayrıca yoxlayır.
+def operator_access(db: Session, user: User, c: Contest) -> str | None:
+    """Operatorun müsabiqəyə girişi: 'owner', 'manage', 'view' və ya None."""
+    if c.created_by == user.id:
+        return "owner"
+    g = db.get(ContestAccess, (c.id, user.id))
+    return g.level if g else None
+
+
 def contest_scope(request: Request, user: User = Depends(require_staff), db: Session = Depends(get_db)) -> None:
-    """Operator yalnız özünün yaratdığı müsabiqəyə daxil ola bilər (bütün /contests/{cid}/... yolları)."""
+    """Operator yalnız öz yaratdığı və ya admin tərəfindən giriş verilmiş müsabiqəyə daxil ola bilər.
+
+    'Yalnız baxış' girişində heç bir dəyişiklik edilə bilməz (yalnız GET sorğuları)."""
     cid = request.path_params.get("cid")
     if cid is None or user.role == "admin":
         return
     c = db.get(Contest, int(cid))
-    if c is None or c.created_by != user.id:
+    access = operator_access(db, user, c) if c else None
+    if access is None:
         raise HTTPException(404, "Müsabiqə tapılmadı. Silinmiş ola bilər; səhifəni yeniləyin.")
+    if access == "view" and request.method not in ("GET", "HEAD"):
+        raise HTTPException(403, "Bu müsabiqəyə yalnız baxış icazəniz var.")
 
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_staff), Depends(contest_scope)])
@@ -93,12 +107,21 @@ def _contest_name_taken(db: Session, name: str, exclude_id: int | None = None) -
 @router.get("/contests")
 def list_contests(user: User = Depends(require_staff), db: Session = Depends(get_db)):
     q = select(Contest).order_by(Contest.created_at.desc(), Contest.id.desc())
+    grants = {}
     if user.role != "admin":
-        q = q.where(Contest.created_by == user.id)
+        grants = dict(db.execute(select(ContestAccess.contest_id, ContestAccess.level)
+                                 .where(ContestAccess.user_id == user.id)).all())
+        q = q.where(or_(Contest.created_by == user.id, Contest.id.in_(list(grants) or [-1])))
     contests = db.scalars(q).all()
+
+    def access(c):
+        if user.role == "admin":
+            return "admin"
+        return "owner" if c.created_by == user.id else grants.get(c.id)
+
     return {
         "items": [
-            {**contest_payload(db, c), "progress": progress(db, c.id),
+            {**contest_payload(db, c), "access": access(c), "progress": progress(db, c.id),
              "criteria_count": db.scalar(select(func.count(Criterion.id)).where(Criterion.contest_id == c.id)) or 0}
             for c in contests
         ]
@@ -215,7 +238,7 @@ def overview(cid: int, db: Session = Depends(get_db)):
     }
 
 
-@router.get(C + "/contest", dependencies=[Depends(PERM_CONTESTS)])
+@router.get(C + "/contest")
 def get_contest_settings(cid: int, db: Session = Depends(get_db)):
     return {"contest": contest_payload(db, get_contest(db, cid)), "teams": team_count(db, cid)}
 
@@ -323,7 +346,7 @@ def _entity_routes(model, path: str, label: str, label_gen: str, action: str, pe
         db.commit()
         return {"ok": True}
 
-    router.add_api_route(f"{C}/{path}", _list, methods=["GET"], dependencies=[Depends(need)])
+    router.add_api_route(f"{C}/{path}", _list, methods=["GET"])
     router.add_api_route(f"{C}/{path}", _create, methods=["POST"])
     router.add_api_route(f"{C}/{path}/{{item_id}}", _rename, methods=["PATCH"])
     router.add_api_route(f"{C}/{path}/{{item_id}}", _delete, methods=["DELETE"])
@@ -353,7 +376,7 @@ def _username_taken(db: Session, u: str, exclude_id: int | None = None) -> bool:
 TAKEN_MSG = "Bu istifadəçi adı artıq istifadə olunur (başqa müsabiqədə də ola bilər)."
 
 
-@router.get(C + "/juries", dependencies=[Depends(PERM_JURIES)])
+@router.get(C + "/juries")
 def list_juries(cid: int, db: Session = Depends(get_db)):
     get_contest(db, cid)
     return {"items": jury_progress(db, cid), "progress": progress(db, cid)}
@@ -705,9 +728,24 @@ def _perm_labels(perms: list[str]) -> str:
     return ", ".join(PERMISSIONS[p] for p in perms) or "icazə yoxdur"
 
 
-def _operator_payload(u: User) -> dict:
-    return {"id": u.id, "username": u.username, "permissions": _clean_perms(u.permissions or []),
-            "version": u.version, "created_at": u.created_at.isoformat() if u.created_at else None}
+ACCESS_LABELS = {"view": "yalnız baxış", "manage": "idarə"}
+
+
+def _operator_payload(u: User, db: Session | None = None) -> dict:
+    out = {"id": u.id, "username": u.username, "permissions": _clean_perms(u.permissions or []),
+           "version": u.version, "created_at": u.created_at.isoformat() if u.created_at else None}
+    if db is not None:
+        rows = db.execute(
+            select(ContestAccess.contest_id, ContestAccess.level, Contest.name)
+            .join(Contest, Contest.id == ContestAccess.contest_id)
+            .where(ContestAccess.user_id == u.id).order_by(Contest.name)
+        ).all()
+        out["contests"] = [{"contest_id": cid, "level": lvl, "name": name} for cid, lvl, name in rows]
+        out["own_contests"] = [
+            {"contest_id": c.id, "name": c.name}
+            for c in db.scalars(select(Contest).where(Contest.created_by == u.id).order_by(Contest.name))
+        ]
+    return out
 
 
 def _get_operator(db: Session, op_id: int) -> User:
@@ -720,7 +758,7 @@ def _get_operator(db: Session, op_id: int) -> User:
 @router.get("/operators", dependencies=ADMIN_ONLY)
 def list_operators(db: Session = Depends(get_db)):
     ops = db.scalars(select(User).where(User.role == "operator").order_by(func.lower(User.username))).all()
-    return {"items": [_operator_payload(u) for u in ops],
+    return {"items": [_operator_payload(u, db) for u in ops],
             "permissions": [{"key": k, "label": v} for k, v in PERMISSIONS.items()]}
 
 
@@ -772,6 +810,43 @@ def update_operator(op_id: int, body: OperatorUpdateIn, admin: User = Depends(re
         db.rollback()
         raise HTTPException(409, TAKEN_MSG)
     return _operator_payload(op)
+
+
+@router.put("/operators/{op_id}/contests")
+def set_operator_contests(op_id: int, body: OperatorContestsIn, admin: User = Depends(require_admin),
+                          db: Session = Depends(get_db)):
+    """Operatorun başqa müsabiqələrə girişini tam əvəz edir (öz yaratdığı müsabiqələr həmişə ona aiddir)."""
+    op = db.execute(select(User).where(User.id == op_id).with_for_update()).scalar_one_or_none()
+    if not op or op.role != "operator":
+        raise HTTPException(404, "Operator tapılmadı.")
+    wanted: dict[int, str] = {}
+    for g in body.grants:
+        if g.contest_id in wanted:
+            raise HTTPException(400, "Eyni müsabiqə iki dəfə göstərilib.")
+        wanted[g.contest_id] = g.level
+    contests = {c.id: c for c in db.scalars(select(Contest).where(Contest.id.in_(list(wanted) or [-1])))}
+    if set(contests) != set(wanted):
+        raise HTTPException(404, "Müsabiqə tapılmadı. Silinmiş ola bilər; səhifəni yeniləyin.")
+    wanted = {cid: lvl for cid, lvl in wanted.items() if contests[cid].created_by != op.id}
+    current = {g.contest_id: g for g in db.scalars(select(ContestAccess).where(ContestAccess.user_id == op.id))}
+    names = {c.id: c.name for c in db.scalars(select(Contest).where(Contest.id.in_(list(set(wanted) | set(current)) or [-1])))}
+    changes = []
+    for cid, g in current.items():
+        if cid not in wanted:
+            changes.append(f"«{names.get(cid, cid)}»: giriş götürüldü")
+            db.delete(g)
+        elif g.level != wanted[cid]:
+            changes.append(f"«{names[cid]}»: {ACCESS_LABELS[g.level]} → {ACCESS_LABELS[wanted[cid]]}")
+            g.level = wanted[cid]
+    for cid, lvl in wanted.items():
+        if cid not in current:
+            changes.append(f"«{names[cid]}»: {ACCESS_LABELS[lvl]}")
+            db.add(ContestAccess(contest_id=cid, user_id=op.id, level=lvl))
+    if changes:
+        audit(db, admin, "operator_access", f"«{op.username}» operatorunun müsabiqələrə girişi dəyişdirildi.",
+              {"changes": {"Giriş": ["", "; ".join(changes)]}})
+    db.commit()
+    return _operator_payload(op, db)
 
 
 @router.post("/operators/{op_id}/password")

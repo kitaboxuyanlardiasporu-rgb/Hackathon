@@ -313,7 +313,20 @@ const SECTIONS = [
   { id: "tarixce", title: "Tarixçə", icon: "history", admin: true },
   { id: "operatorlar", title: "Operatorlar", icon: "shield", admin: true, global: true },
 ];
-const allowed = (sec) => (sec.admin ? isAdmin() : sec.perm ? can(sec.perm) : true);
+// Operator girişi olan müsabiqənin bütün detallarını görür; dəyişmək üçün icazə və "idarə" girişi lazımdır.
+const allowed = (sec) => (sec.admin ? isAdmin() : true);
+const editable = (perm, c = AdminApp.current()) => isAdmin() || (can(perm) && !!c && c.access !== "view");
+const ACCESS_CHIP = {
+  owner: `<span class="chip chip-info">Sizin müsabiqəniz</span>`,
+  manage: `<span class="chip chip-info">İdarə girişi</span>`,
+  view: `<span class="chip chip-muted">Yalnız baxış</span>`,
+};
+const readOnlyNote = (perm) => {
+  const c = AdminApp.current();
+  if (editable(perm)) return "";
+  const why = c && c.access === "view" ? "Bu müsabiqəyə yalnız baxış girişiniz var." : "Bu bölmədə dəyişiklik etmək üçün icazəniz yoxdur.";
+  return `<div class="alert alert-info">${icon("info")}<div>${why} Məlumatları görə bilərsiniz, dəyişə bilməzsiniz.</div></div>`;
+};
 
 const TYPE_HELP = {
   unique: {
@@ -438,7 +451,8 @@ const AdminApp = {
           ? `<span class="chip chip-ok">${icon("play")} Qiymətləndirmə açıqdır</span>`
           : `<span class="chip chip-muted">${icon("stop")} Qiymətləndirmə bağlıdır</span>`}
         <div class="spacer"></div>
-        ${can("open_close") ? `<button class="btn ${c.is_open ? "btn-secondary" : "btn-primary"} btn-sm" data-toggle-open="${c.id}">
+        ${!isAdmin() && c.access ? ACCESS_CHIP[c.access] : ""}
+        ${editable("open_close", c) ? `<button class="btn ${c.is_open ? "btn-secondary" : "btn-primary"} btn-sm" data-toggle-open="${c.id}">
           ${c.is_open ? `${icon("stop", "sm")} Qiymətləndirməni bağla` : `${icon("play", "sm")} Qiymətləndirməni aç`}</button>` : ""}
       </div>`;
   },
@@ -582,6 +596,7 @@ const Views = {
               <div class="row" style="gap:8px">
                 <h3 style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(c.name)}</h3>
                 ${c.id === CUR ? `<span class="chip chip-info">${icon("check")} Seçilib</span>` : ""}
+                ${!isAdmin() && c.access ? ACCESS_CHIP[c.access] : ""}
                 ${c.is_open ? `<span class="chip chip-ok">${icon("play")} Açıq</span>` : `<span class="chip chip-muted">${icon("stop")} Bağlı</span>`}
               </div>
               <div class="contest-meta small">
@@ -593,9 +608,9 @@ const Views = {
               <div class="progress sm" data-cp="${c.id}" role="progressbar" aria-label="${esc(c.name)} irəliləyişi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.progress.percent}"><span></span></div>
               <div class="row" style="gap:6px">
                 ${c.id !== CUR ? `<button class="btn btn-secondary btn-sm" data-pick="${c.id}">Seç</button>` : `<a class="btn btn-secondary btn-sm" href="#/icmal">İcmala keç</a>`}
-                ${can("open_close") ? `<button class="btn btn-ghost btn-sm" data-toggle-open="${c.id}">${c.is_open ? `${icon("stop", "sm")} Bağla` : `${icon("play", "sm")} Aç`}</button>` : ""}
+                ${editable("open_close", c) ? `<button class="btn btn-ghost btn-sm" data-toggle-open="${c.id}">${c.is_open ? `${icon("stop", "sm")} Bağla` : `${icon("play", "sm")} Aç`}</button>` : ""}
                 <div class="spacer"></div>
-                ${can("reset") ? `<button class="btn btn-ghost btn-sm" data-reset-contest="${c.id}">${icon("refresh", "sm")} Sıfırla</button>` : ""}
+                ${editable("reset", c) ? `<button class="btn btn-ghost btn-sm" data-reset-contest="${c.id}">${icon("refresh", "sm")} Sıfırla</button>` : ""}
                 ${isAdmin() ? `<button class="btn btn-danger-ghost btn-sm" data-del-contest="${c.id}">${icon("trash", "sm")} Sil</button>` : ""}
               </div>
             </article>`).join("")}</div>` : `<div class="card empty">${icon("layers")}<p>${isAdmin() ? "Hələ müsabiqə yoxdur. Yuxarıdakı formadan yeni müsabiqə yaradın." : can("contests") ? "Sizin yaratdığınız müsabiqə yoxdur. Yuxarıdakı formadan yeni müsabiqə yaradın." : "Sizin yaratdığınız müsabiqə yoxdur. Müsabiqə yaratmaq icazəsi üçün adminə müraciət edin."}</p></div>`}
@@ -727,17 +742,19 @@ const Views = {
   async ayarlar(main) {
     const d = await api("GET", `${ADM()}/contest`);
     const c = d.contest;
-    const locked = c.structure_locked;
+    const ro = !editable("contests");
+    const locked = c.structure_locked || ro;
     main.innerHTML = `
       ${pageHead("Müsabiqə ayarları")}
+      ${readOnlyNote("contests")}
       <form class="card stack enter" id="settings-form" novalidate>
         <div class="field">
           <label for="c-name">Müsabiqənin adı</label>
-          <input class="input" id="c-name" maxlength="200" value="${esc(c.name)}" required>
+          <input class="input" id="c-name" maxlength="200" value="${esc(c.name)}" required ${ro ? "disabled" : ""}>
         </div>
         <fieldset class="stack-sm" style="border:0;padding:0;margin:0">
           <legend class="label" style="margin-bottom:8px">Qiymətləndirmə tipi</legend>
-          ${locked ? `<div class="alert alert-info" style="margin-bottom:8px">${icon("lock")}<div>Qiymətləndirmə tipi və şkala həddi ilk qiymətləndirmə təsdiqləndiyi üçün (${esc(fmtTime(c.locked_at))}) kilidlənib. Bu, artıq verilmiş balların eyni qaydalarla müqayisəsini qoruyur.</div></div>` : ""}
+          ${c.structure_locked ? `<div class="alert alert-info" style="margin-bottom:8px">${icon("lock")}<div>Qiymətləndirmə tipi və şkala həddi ilk qiymətləndirmə təsdiqləndiyi üçün (${esc(fmtTime(c.locked_at))}) kilidlənib. Bu, artıq verilmiş balların eyni qaydalarla müqayisəsini qoruyur.</div></div>` : ""}
           <div class="type-options">
             ${["unique", "scale5", "custom"].map((t) => `
               <label class="type-opt">
@@ -753,7 +770,7 @@ const Views = {
           <span class="field-error hidden" id="c-max-err" role="alert"></span>
         </div>
         <div class="alert alert-info" id="type-help"></div>
-        <div class="row"><button class="btn btn-primary" type="submit">Yadda saxla</button></div>
+        ${ro ? "" : `<div class="row"><button class="btn btn-primary" type="submit">Yadda saxla</button></div>`}
       </form>`;
     const form = $("#settings-form");
     const help = () => {
@@ -803,8 +820,8 @@ const Views = {
   },
 
   // ------------------------------------------------------------ Komandalar / Meyarlar
-  komandalar(main) { return entityView(main, { path: "teams", title: "Komandalar", one: "Komanda", gen: "komanda", placeholder: "Komandanın adı" }); },
-  meyarlar(main) { return entityView(main, { path: "criteria", title: "Meyarlar", one: "Meyar", gen: "meyar", placeholder: "Meyarın adı" }); },
+  komandalar(main) { return entityView(main, { perm: "teams", path: "teams", title: "Komandalar", one: "Komanda", gen: "komanda", placeholder: "Komandanın adı" }); },
+  meyarlar(main) { return entityView(main, { perm: "criteria", path: "criteria", title: "Meyarlar", one: "Meyar", gen: "meyar", placeholder: "Meyarın adı" }); },
 
   // ------------------------------------------------------------ Jürilər
   async juriler(main) {
@@ -813,7 +830,8 @@ const Views = {
     main.innerHTML = `
       ${pageHead("Jürilər", `Gözlənilən qiymətləndirmə sayı: ${p.teams} komanda × ${p.juries} jüri = <strong class="num">${p.expected}</strong>`)}
       <div class="stack">
-        <form class="card stack enter" id="jury-form" novalidate>
+        ${readOnlyNote("juries")}
+        ${editable("juries") ? `<form class="card stack enter" id="jury-form" novalidate>
           <h2>Yeni jüri hesabı</h2>
           <div class="form-row">
             <div class="field"><label for="j-user">İstifadəçi adı</label>
@@ -823,7 +841,7 @@ const Views = {
           </div>
           <div id="jury-form-err" role="alert"></div>
           <div class="row"><button class="btn btn-primary" type="submit">${icon("plus")} Hesab yarat</button></div>
-        </form>
+        </form>` : ""}
         ${d.items.length ? `
         <div class="table-wrap enter">
           <table>
@@ -833,18 +851,18 @@ const Views = {
                 <td><strong>${esc(j.username)}</strong></td>
                 <td style="min-width:180px"><div class="stack-sm" style="gap:4px"><span class="small muted num">${j.completed} / ${j.total} komanda</span>
                   <div class="progress sm" data-jp="${i}" role="progressbar" aria-label="${esc(j.username)} irəliləyişi" aria-valuemin="0" aria-valuemax="${j.total}" aria-valuenow="${j.completed}"><span></span></div></div></td>
-                <td class="num"><div class="row" style="justify-content:flex-end;gap:4px;flex-wrap:nowrap">
+                <td class="num">${editable("juries") ? `<div class="row" style="justify-content:flex-end;gap:4px;flex-wrap:nowrap">
                   <button class="btn btn-ghost btn-sm" data-rename="${j.id}">${icon("edit", "sm")} Adı dəyiş</button>
                   <button class="btn btn-ghost btn-sm" data-pass="${j.id}">${icon("key", "sm")} Yeni parol</button>
                   ${j.completed > 0 && !isAdmin() ? "" : `<button class="btn btn-danger-ghost btn-sm btn-icon" data-del="${j.id}" aria-label="${esc(j.username)} hesabını sil">${icon("trash", "sm")}</button>`}
-                </div></td>
+                </div>` : `<span class="muted small">—</span>`}</td>
               </tr>`).join("")}</tbody>
           </table>
-        </div>` : `<div class="card empty">${icon("users")}<p>Hələ jüri hesabı yoxdur. Yuxarıdakı formadan ilk hesabı yaradın.</p></div>`}
+        </div>` : `<div class="card empty">${icon("users")}<p>Hələ jüri hesabı yoxdur.${editable("juries") ? " Yuxarıdakı formadan ilk hesabı yaradın." : ""}</p></div>`}
       </div>`;
     d.items.forEach((j, i) => setProgress($(`[data-jp="${i}"]`), j.total ? (j.completed * 100) / j.total : 0));
     const byId = Object.fromEntries(d.items.map((j) => [j.id, j]));
-    $("#jury-form").addEventListener("submit", async (e) => {
+    $("#jury-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const username = $("#j-user").value.trim(), password = $("#j-pass").value;
       const errEl = $("#jury-form-err");
@@ -1035,8 +1053,16 @@ const Views = {
             <div class="row" style="gap:8px"><span class="brand-mark" style="width:34px;height:34px;border-radius:9px">${icon("shield")}</span>
               <h3 style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(o.username)}</h3></div>
             <div class="row" style="gap:6px">${chips(o.permissions)}</div>
+            <div class="stack-sm" style="gap:4px">
+              <span class="label">Müsabiqələr</span>
+              <div class="small">${[
+                ...o.own_contests.map((x) => `<div>${esc(x.name)} <span class="muted">— öz müsabiqəsi</span></div>`),
+                ...o.contests.map((x) => `<div>${esc(x.name)} <span class="muted">— ${x.level === "view" ? "yalnız baxış" : "idarə"}</span></div>`),
+              ].join("") || `<span class="muted">Heç bir müsabiqə yoxdur</span>`}</div>
+            </div>
             <div class="row" style="gap:6px">
               <button class="btn btn-secondary btn-sm" data-op-edit="${o.id}">${icon("edit", "sm")} İcazələr və ad</button>
+              <button class="btn btn-secondary btn-sm" data-op-access="${o.id}">${icon("layers", "sm")} Müsabiqələrə giriş</button>
               <button class="btn btn-ghost btn-sm" data-op-pass="${o.id}">${icon("key", "sm")} Yeni parol</button>
               <div class="spacer"></div>
               <button class="btn btn-danger-ghost btn-sm btn-icon" data-op-del="${o.id}" aria-label="${esc(o.username)} operatorunu sil">${icon("trash", "sm")}</button>
@@ -1063,6 +1089,40 @@ const Views = {
     });
     main.onclick = async (e) => {
       const ed = e.target.closest("[data-op-edit]"), pw = e.target.closest("[data-op-pass]"), del = e.target.closest("[data-op-del]");
+      const acc = e.target.closest("[data-op-access]");
+      if (acc) {
+        const o = byId[acc.dataset.opAccess];
+        const own = new Set(o.own_contests.map((x) => x.contest_id));
+        const cur = Object.fromEntries(o.contests.map((x) => [x.contest_id, x.level]));
+        const all = AdminApp.contests;
+        const ok = await modal({
+          title: `Müsabiqələrə giriş: ${o.username}`,
+          wide: true,
+          body: `
+            <p class="small muted">Operator özünün yaratdığı müsabiqələri həmişə görür. Başqa müsabiqələr üçün giriş səviyyəsini seçin:</p>
+            <ul class="small" style="margin:0;padding-left:18px">
+              <li><strong>Yalnız baxış</strong> — komandaları, meyarları və jüriləri görür, heç nəyi dəyişə bilmir.</li>
+              <li><strong>İdarə</strong> — operatorun icazələri daxilində işləyir (müsabiqəni silmək yenə yalnız admindədir).</li>
+            </ul>
+            ${all.length ? `<div class="access-list">${all.map((c) => `
+              <div class="access-row">
+                <label for="acc-${c.id}"><strong>${esc(c.name)}</strong><span class="muted small">${esc(c.summary)}</span></label>
+                ${own.has(c.id)
+                  ? `<span class="chip chip-info">Öz müsabiqəsi</span>`
+                  : `<select class="input" id="acc-${c.id}" data-acc="${c.id}">
+                      <option value="">Giriş yoxdur</option>
+                      <option value="view" ${cur[c.id] === "view" ? "selected" : ""}>Yalnız baxış</option>
+                      <option value="manage" ${cur[c.id] === "manage" ? "selected" : ""}>İdarə</option>
+                    </select>`}
+              </div>`).join("")}</div>` : `<p class="muted">Hələ müsabiqə yoxdur.</p>`}`,
+          confirmText: "Yadda saxla",
+          onConfirm: (dl) => api("PUT", `/api/admin/operators/${o.id}/contests`, {
+            grants: $$("select[data-acc]", dl).filter((x) => x.value).map((x) => ({ contest_id: +x.dataset.acc, level: x.value })),
+          }),
+        });
+        if (ok) { toast("Müsabiqələrə giriş yeniləndi."); AdminApp.refresh(); }
+        return;
+      }
       if (ed) {
         const o = byId[ed.dataset.opEdit];
         const ok = await modal({
@@ -1168,29 +1228,30 @@ async function entityView(main, cfg) {
   main.innerHTML = `
     ${pageHead(cfg.title, `${d.items.length} ${cfg.gen} · ${rangeNote}`)}
     <div class="stack">
-      ${lockNotice(c, `${cfg.one} əlavə etmək və silmək bağlıdır.`)}
-      <form class="card enter" id="add-form" novalidate>
+      ${readOnlyNote(cfg.perm)}
+      ${editable(cfg.perm) ? lockNotice(c, `${cfg.one} əlavə etmək və silmək bağlıdır.`) : ""}
+      ${editable(cfg.perm) ? `<form class="card enter" id="add-form" novalidate>
         <div class="form-row">
           <div class="field"><label for="new-name">Yeni ${cfg.gen}</label>
             <input class="input" id="new-name" maxlength="100" placeholder="${esc(cfg.placeholder)}" ${locked ? "disabled" : ""}></div>
           <button class="btn btn-primary" type="submit" ${locked ? "disabled" : ""}>${icon("plus")} Əlavə et</button>
         </div>
         <div id="add-err" role="alert" style="margin-top:8px"></div>
-      </form>
+      </form>` : ""}
       ${d.items.length ? `<ul class="list card enter" style="padding:0" id="ent-list">
         ${d.items.map((it, i) => `
           <li class="list-item" data-id="${it.id}">
             <span class="idx">${i + 1}.</span>
             <span class="name">${esc(it.name)}</span>
-            <div class="list-actions">
+            ${editable(cfg.perm) ? `<div class="list-actions">
               <button class="btn btn-ghost btn-sm" data-edit aria-label="«${esc(it.name)}» adını dəyiş">${icon("edit", "sm")}<span class="hide-sm">Adı dəyiş</span></button>
               <button class="btn btn-danger-ghost btn-sm btn-icon" data-delete ${locked ? 'disabled title="İlk təsdiqdən sonra silmək mümkün deyil"' : ""} aria-label="«${esc(it.name)}» sil">${icon("trash", "sm")}</button>
-            </div>
+            </div>` : ""}
           </li>`).join("")}
-      </ul>` : `<div class="card empty">${icon("inbox")}<p>Siyahı boşdur. Yuxarıdakı formadan əlavə edin.</p></div>`}
+      </ul>` : `<div class="card empty">${icon("inbox")}<p>Siyahı boşdur.${editable(cfg.perm) ? " Yuxarıdakı formadan əlavə edin." : ""}</p></div>`}
     </div>`;
   const items = Object.fromEntries(d.items.map((it) => [it.id, it]));
-  $("#add-form").addEventListener("submit", async (e) => {
+  $("#add-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const inp = $("#new-name"), name = inp.value.trim();
     const errEl = $("#add-err");
