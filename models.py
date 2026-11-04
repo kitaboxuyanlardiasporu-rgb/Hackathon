@@ -27,17 +27,19 @@ EVAL_TYPES = ("unique", "scale5", "custom")
 
 
 class Contest(Base):
-    """Portalda tək müsabiqə saxlanılır (id = 1)."""
+    """Müsabiqə. Hər müsabiqənin öz komandaları, meyarları və jüriləri var."""
 
     __tablename__ = "contest"
     __table_args__ = (
-        CheckConstraint("id = 1", name="ck_contest_single"),
         CheckConstraint("eval_type IN ('unique','scale5','custom')", name="ck_contest_type"),
         CheckConstraint("custom_max IS NULL OR (custom_max BETWEEN 2 AND 100)", name="ck_contest_custom_max"),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Qiymətləndirmə açıqdırsa jürilər bal təsdiqləyə bilər.
+    is_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"), default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     eval_type: Mapped[str] = mapped_column(String(16), nullable=False, server_default="unique", default="unique")
     custom_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     structure_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"), default=False)
@@ -57,6 +59,10 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Jüri bir müsabiqəyə aiddir; admin üçün boşdur.
+    contest_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contest.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -65,6 +71,7 @@ class User(Base):
 class Team(Base):
     __tablename__ = "teams"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contest_id: Mapped[int] = mapped_column(ForeignKey("contest.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
@@ -74,6 +81,7 @@ class Team(Base):
 class Criterion(Base):
     __tablename__ = "criteria"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contest_id: Mapped[int] = mapped_column(ForeignKey("contest.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
@@ -87,6 +95,7 @@ class Evaluation(Base):
     __table_args__ = (UniqueConstraint("jury_id", "team_id", name="uq_eval_jury_team"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contest_id: Mapped[int] = mapped_column(ForeignKey("contest.id", ondelete="CASCADE"), nullable=False, index=True)
     jury_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="RESTRICT"), nullable=False, index=True)
     confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
@@ -146,6 +155,8 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    # Müsabiqə silinsə də tarixçə saxlanılır (xarici açar yoxdur).
+    contest_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     actor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     actor_username: Mapped[str] = mapped_column(String(50), nullable=False)
     actor_role: Mapped[str] = mapped_column(String(10), nullable=False)

@@ -11,21 +11,29 @@ TYPE_LABELS = {
 }
 
 
-def lock_contest(db: Session) -> Contest:
-    """Bütün struktur və bal yazma əməliyyatlarını ardıcıllaşdıran qlobal kilid."""
-    return db.execute(select(Contest).where(Contest.id == 1).with_for_update()).scalar_one()
+def lock_contest(db: Session, contest_id: int) -> Contest:
+    """Müsabiqə daxilində bütün struktur və bal yazma əməliyyatlarını ardıcıllaşdıran kilid."""
+    c = db.execute(select(Contest).where(Contest.id == contest_id).with_for_update()).scalar_one_or_none()
+    if c is None:
+        raise HTTPException(404, "Müsabiqə tapılmadı. Silinmiş ola bilər; səhifəni yeniləyin.")
+    return c
 
 
-def get_contest(db: Session) -> Contest:
-    return db.execute(select(Contest).where(Contest.id == 1)).scalar_one()
+def get_contest(db: Session, contest_id: int) -> Contest:
+    c = db.get(Contest, contest_id)
+    if c is None:
+        raise HTTPException(404, "Müsabiqə tapılmadı. Silinmiş ola bilər; səhifəni yeniləyin.")
+    return c
 
 
-def team_count(db: Session) -> int:
-    return db.scalar(select(func.count(Team.id))) or 0
+def team_count(db: Session, contest_id: int) -> int:
+    return db.scalar(select(func.count(Team.id)).where(Team.contest_id == contest_id)) or 0
 
 
-def jury_count(db: Session) -> int:
-    return db.scalar(select(func.count(User.id)).where(User.role == "jury")) or 0
+def jury_count(db: Session, contest_id: int) -> int:
+    return db.scalar(
+        select(func.count(User.id)).where(User.role == "jury", User.contest_id == contest_id)
+    ) or 0
 
 
 def score_max(contest: Contest, n_teams: int) -> int:
@@ -53,12 +61,15 @@ def type_info(contest: Contest, n_teams: int) -> dict:
 
 
 def contest_payload(db: Session, contest: Contest) -> dict:
-    n = team_count(db)
+    n = team_count(db, contest.id)
     return {
+        "id": contest.id,
         "name": contest.name,
+        "is_open": contest.is_open,
         "custom_max": contest.custom_max,
         "structure_locked": contest.structure_locked,
         "locked_at": contest.locked_at.isoformat() if contest.locked_at else None,
+        "created_at": contest.created_at.isoformat() if contest.created_at else None,
         "version": contest.version,
         **type_info(contest, n),
     }
@@ -76,7 +87,8 @@ def check_range(contest: Contest, n_teams: int, value) -> None:
         raise HTTPException(400, f"Bal 1 ilə {mx} arasında tam ədəd olmalıdır.")
 
 
-def audit(db: Session, actor: User, action: str, summary: str, details: dict | None = None) -> None:
+def audit(db: Session, actor: User, action: str, summary: str, details: dict | None = None,
+          contest_id: int | None = None) -> None:
     db.add(
         AuditLog(
             actor_id=actor.id,
@@ -85,16 +97,17 @@ def audit(db: Session, actor: User, action: str, summary: str, details: dict | N
             action=action,
             summary=summary,
             details=details,
+            contest_id=contest_id,
         )
     )
 
 
 # ---------------------------------------------------------------- nəticələr
-def progress(db: Session) -> dict:
-    n_teams = team_count(db)
-    n_juries = jury_count(db)
+def progress(db: Session, contest_id: int) -> dict:
+    n_teams = team_count(db, contest_id)
+    n_juries = jury_count(db, contest_id)
     expected = n_teams * n_juries
-    completed = db.scalar(select(func.count(Evaluation.id))) or 0
+    completed = db.scalar(select(func.count(Evaluation.id)).where(Evaluation.contest_id == contest_id)) or 0
     final = n_juries > 0 and n_teams > 0 and completed >= expected
     pct = round(completed * 100 / expected, 1) if expected else 0.0
     return {
@@ -108,12 +121,18 @@ def progress(db: Session) -> dict:
     }
 
 
-def jury_progress(db: Session) -> list[dict]:
-    n_teams = team_count(db)
+def jury_progress(db: Session, contest_id: int) -> list[dict]:
+    n_teams = team_count(db, contest_id)
     counts = dict(
-        db.execute(select(Evaluation.jury_id, func.count(Evaluation.id)).group_by(Evaluation.jury_id)).all()
+        db.execute(
+            select(Evaluation.jury_id, func.count(Evaluation.id))
+            .where(Evaluation.contest_id == contest_id)
+            .group_by(Evaluation.jury_id)
+        ).all()
     )
-    juries = db.scalars(select(User).where(User.role == "jury").order_by(func.lower(User.username))).all()
+    juries = db.scalars(
+        select(User).where(User.role == "jury", User.contest_id == contest_id).order_by(func.lower(User.username))
+    ).all()
     return [
         {
             "id": j.id,
@@ -126,20 +145,27 @@ def jury_progress(db: Session) -> list[dict]:
     ]
 
 
-def compute_results(db: Session) -> dict:
-    contest = get_contest(db)
-    teams = db.scalars(select(Team).order_by(Team.position, Team.id)).all()
-    criteria = db.scalars(select(Criterion).order_by(Criterion.position, Criterion.id)).all()
+def compute_results(db: Session, contest_id: int) -> dict:
+    contest = get_contest(db, contest_id)
+    teams = db.scalars(select(Team).where(Team.contest_id == contest_id).order_by(Team.position, Team.id)).all()
+    criteria = db.scalars(
+        select(Criterion).where(Criterion.contest_id == contest_id).order_by(Criterion.position, Criterion.id)
+    ).all()
     sums = {
         (t, c): s
         for t, c, s in db.execute(
-            select(Score.team_id, Score.criterion_id, func.sum(Score.value)).group_by(
-                Score.team_id, Score.criterion_id
-            )
+            select(Score.team_id, Score.criterion_id, func.sum(Score.value))
+            .join(Evaluation, Evaluation.id == Score.evaluation_id)
+            .where(Evaluation.contest_id == contest_id)
+            .group_by(Score.team_id, Score.criterion_id)
         ).all()
     }
     jcount = dict(
-        db.execute(select(Evaluation.team_id, func.count(Evaluation.id)).group_by(Evaluation.team_id)).all()
+        db.execute(
+            select(Evaluation.team_id, func.count(Evaluation.id))
+            .where(Evaluation.contest_id == contest_id)
+            .group_by(Evaluation.team_id)
+        ).all()
     )
     rows = []
     for t in teams:
@@ -168,5 +194,5 @@ def compute_results(db: Session) -> dict:
         "contest": contest_payload(db, contest),
         "criteria": [{"id": c.id, "name": c.name} for c in criteria],
         "rows": ordered,
-        "progress": progress(db),
+        "progress": progress(db, contest_id),
     }

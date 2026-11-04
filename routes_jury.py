@@ -14,6 +14,15 @@ from .security import require_jury
 router = APIRouter(prefix="/api/jury")
 
 
+CLOSED_MSG = "Qiymətləndirmə hazırda bağlıdır. Admin açdıqdan sonra davam edə bilərsiniz."
+
+
+def _jury_contest_id(user: User) -> int:
+    if not user.contest_id:
+        raise HTTPException(409, "Hesabınız heç bir müsabiqəyə bağlı deyil. Adminə müraciət edin.")
+    return user.contest_id
+
+
 def _my_evaluations(db: Session, jury_id: int) -> list[Evaluation]:
     return db.scalars(
         select(Evaluation).where(Evaluation.jury_id == jury_id).options(selectinload(Evaluation.scores))
@@ -22,9 +31,12 @@ def _my_evaluations(db: Session, jury_id: int) -> list[Evaluation]:
 
 @router.get("/state")
 def state(user: User = Depends(require_jury), db: Session = Depends(get_db)):
-    contest = get_contest(db)
-    teams = db.scalars(select(Team).order_by(Team.position, Team.id)).all()
-    criteria = db.scalars(select(Criterion).order_by(Criterion.position, Criterion.id)).all()
+    cid = _jury_contest_id(user)
+    contest = get_contest(db, cid)
+    teams = db.scalars(select(Team).where(Team.contest_id == cid).order_by(Team.position, Team.id)).all()
+    criteria = db.scalars(
+        select(Criterion).where(Criterion.contest_id == cid).order_by(Criterion.position, Criterion.id)
+    ).all()
     evals = _my_evaluations(db, user.id)
     return {
         "user": {"id": user.id, "username": user.username},
@@ -45,11 +57,12 @@ def state(user: User = Depends(require_jury), db: Session = Depends(get_db)):
 
 @router.post("/evaluations")
 def confirm(body: ConfirmIn, user: User = Depends(require_jury), db: Session = Depends(get_db)):
-    contest = lock_contest(db)  # ardıcıllaşdırma: paralel sorğular bir-birini pozmur
+    cid = _jury_contest_id(user)
+    contest = lock_contest(db, cid)  # ardıcıllaşdırma: paralel sorğular bir-birini pozmur
     team = db.get(Team, body.team_id)
-    if not team:
+    if not team or team.contest_id != cid:
         raise HTTPException(404, "Komanda tapılmadı. Səhifəni yeniləyin.")
-    criteria = db.scalars(select(Criterion)).all()
+    criteria = db.scalars(select(Criterion).where(Criterion.contest_id == cid)).all()
     crit_ids = {c.id for c in criteria}
     crit_names = {c.id: c.name for c in criteria}
     if not crit_ids:
@@ -63,7 +76,7 @@ def confirm(body: ConfirmIn, user: User = Depends(require_jury), db: Session = D
     if set(given) != crit_ids:
         raise HTTPException(400, "Bütün meyarlar üzrə bal seçilməlidir.")
 
-    n = team_count(db)
+    n = team_count(db, cid)
     for v in given.values():
         check_range(contest, n, v)
 
@@ -78,6 +91,9 @@ def confirm(body: ConfirmIn, user: User = Depends(require_jury), db: Session = D
             # Təkrar göndərilmiş eyni sorğu: əlavə qeyd yaradılmır.
             return {"status": "already_confirmed", "team_id": team.id}
         raise HTTPException(409, "Bu komanda artıq təsdiqlənib. Təsdiqlənmiş balları dəyişmək mümkün deyil.")
+
+    if not contest.is_open:
+        raise HTTPException(409, CLOSED_MSG)
 
     unique = contest.eval_type == "unique"
     if unique:
@@ -95,7 +111,7 @@ def confirm(body: ConfirmIn, user: User = Depends(require_jury), db: Session = D
         if conflicts:
             raise HTTPException(409, "; ".join(conflicts) + ".")
 
-    ev = Evaluation(jury_id=user.id, team_id=team.id, confirmed_at=datetime.now(timezone.utc))
+    ev = Evaluation(contest_id=cid, jury_id=user.id, team_id=team.id, confirmed_at=datetime.now(timezone.utc))
     db.add(ev)
     db.flush()
     for c, v in given.items():
@@ -119,6 +135,7 @@ def confirm(body: ConfirmIn, user: User = Depends(require_jury), db: Session = D
         "evaluation_confirm",
         f"«{team.name}» komandasının qiymətləndirməsi təsdiqləndi.",
         {"team_id": team.id, "team": team.name, "scores": {crit_names[c]: v for c, v in given.items()}},
+        contest_id=cid,
     )
     try:
         db.commit()

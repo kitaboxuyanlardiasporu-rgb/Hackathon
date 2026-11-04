@@ -359,3 +359,27 @@ tbody th { font-size: .93rem; }
   .segmented button { flex: 1; padding: 0 6px; font-size: .84rem; }
   .jury-top .brand-name { font-size: .95rem; }
 }
+
+/* ------------------------------------------------ müsabiqələr */
+.contest-switch { margin-top: 18px; display: flex; flex-direction: column; gap: 6px; }
+.contest-switch label { font-size: .78rem; color: #9FB4DA; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 0 2px; }
+.contest-switch select {
+  width: 100%; min-height: 44px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .18); background: rgba(255, 255, 255, .08);
+  color: #fff; padding: 8px 10px; font-weight: 600; cursor: pointer;
+}
+.contest-switch select:focus-visible { outline: 3px solid #93C5FD; outline-offset: 2px; }
+.contest-switch option { color: var(--text); background: #fff; }
+.contest-bar {
+  display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 20px;
+  border-radius: 12px; border: 1px solid var(--line); background: #fff; box-shadow: var(--shadow);
+  border-left: 4px solid var(--muted);
+}
+.contest-bar.is-open { border-left-color: var(--ok); }
+.contest-bar .cb-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.contest-bar .cb-text strong { color: var(--navy); overflow-wrap: anywhere; }
+.contest-list { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+@media (max-width: 420px) { .contest-list { grid-template-columns: 1fr; } }
+.contest-item { display: flex; flex-direction: column; gap: 12px; }
+.contest-item.is-current { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12), var(--shadow); }
+.contest-meta { display: flex; flex-direction: column; gap: 2px; }
+.sidebar { overflow-y: auto; overscroll-behavior: contain; }

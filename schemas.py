@@ -65,3 +65,19 @@ class EvalEditIn(BaseModel):
 
 class UnlockIn(BaseModel):
     version: StrictInt
+
+
+class ContestCreateIn(BaseModel):
+    name: str
+    eval_type: Literal["unique", "scale5", "custom"] = "unique"
+    custom_max: StrictInt | None = None
+    seed_defaults: bool = True
+    team_count: StrictInt = 10
+
+
+class ContestStatusIn(BaseModel):
+    is_open: bool
+
+
+class ContestDeleteIn(BaseModel):
+    confirm_name: str

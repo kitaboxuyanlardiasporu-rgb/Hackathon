@@ -36,6 +36,9 @@ const PATHS = {
   history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/>',
+  layers: '<path d="M12 3 2.5 8 12 13l9.5-5L12 3z"/><path d="M2.5 12.5 12 17.5l9.5-5"/><path d="M2.5 16.5 12 21.5l9.5-5"/>',
+  play: '<path d="M7 5l12 7-12 7V5z"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   inbox: '<path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5 5h14l2 8v6H3v-6l2-8z"/>',
 };
 const icon = (name, cls = "") => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${PATHS[name] || ""}</svg>`;
@@ -289,7 +292,11 @@ function startApp() {
 }
 
 // ================================================================ ADMIN
+let CUR = null; // seçilmiş müsabiqənin id-si
+const ADM = () => `/api/admin/contests/${CUR}`;
+
 const SECTIONS = [
+  { id: "musabiqeler", title: "Müsabiqələr", icon: "layers", global: true },
   { id: "icmal", title: "İcmal", icon: "grid" },
   { id: "ayarlar", title: "Müsabiqə ayarları", icon: "sliders" },
   { id: "komandalar", title: "Komandalar", icon: "users" },
@@ -334,6 +341,10 @@ const AdminApp = {
         <div class="scrim" id="scrim"></div>
         <aside class="sidebar" id="sidebar" aria-label="Admin menyusu">
           <div class="brand"><span class="brand-mark">${icon("check")}</span><span class="brand-name">Qiymətləndirmə portalı</span></div>
+          <div class="contest-switch">
+            <label for="contest-select">Seçilmiş müsabiqə</label>
+            <select id="contest-select"></select>
+          </div>
           <nav class="nav">
             ${SECTIONS.map((s) => `<a href="#/${s.id}" data-nav="${s.id}">${icon(s.icon)}<span>${s.title}</span></a>`).join("")}
           </nav>
@@ -358,8 +369,66 @@ const AdminApp = {
     sb.addEventListener("keydown", (e) => { if (e.key === "Escape" && sb.classList.contains("open")) { setMenu(false); mb.focus(); } });
     sb.addEventListener("click", (e) => { if (e.target.closest("a")) setMenu(false); });
     $("#logout-btn").addEventListener("click", logout);
+    $("#contest-select").addEventListener("change", (e) => {
+      this.select(+e.target.value);
+      toast(`Seçildi: «${this.current().name}».`, "info");
+      if (SECTIONS.find((x) => x.id === this.section)?.global) location.hash = "#/icmal"; else this.route();
+    });
     window.onhashchange = () => this.route();
     this.route();
+  },
+  contests: [],
+  current() { return this.contests.find((c) => c.id === CUR); },
+  select(id) {
+    CUR = id;
+    store.set("qp_cur_contest", id);
+    const sel = $("#contest-select");
+    if (sel) sel.value = String(id);
+  },
+  async loadContests() {
+    const d = await api("GET", "/api/admin/contests");
+    this.contests = d.items;
+    const saved = store.get("qp_cur_contest");
+    const prev = CUR;
+    const ids = this.contests.map((c) => c.id);
+    let next = ids.includes(CUR) ? CUR : ids.includes(saved) ? saved : ids[0] ?? null;
+    if (prev && !ids.includes(prev)) toast("Seçilmiş müsabiqə artıq mövcud deyil. Başqa müsabiqə seçildi.", "info");
+    const sel = $("#contest-select");
+    if (sel) {
+      sel.innerHTML = this.contests.map((c) => `<option value="${c.id}">${esc(c.name)} — ${c.is_open ? "açıq" : "bağlı"}</option>`).join("");
+    }
+    if (next !== null) this.select(next);
+  },
+  contestBar() {
+    const c = this.current();
+    if (!c) return "";
+    return `
+      <div class="contest-bar ${c.is_open ? "is-open" : "is-closed"}">
+        <div class="cb-text">
+          <span class="muted small">Müsabiqə</span>
+          <strong>${esc(c.name)}</strong>
+        </div>
+        ${c.is_open
+          ? `<span class="chip chip-ok">${icon("play")} Qiymətləndirmə açıqdır</span>`
+          : `<span class="chip chip-muted">${icon("stop")} Qiymətləndirmə bağlıdır</span>`}
+        <div class="spacer"></div>
+        <button class="btn ${c.is_open ? "btn-secondary" : "btn-primary"} btn-sm" data-toggle-open="${c.id}">
+          ${c.is_open ? `${icon("stop", "sm")} Qiymətləndirməni bağla` : `${icon("play", "sm")} Qiymətləndirməni aç`}</button>
+      </div>`;
+  },
+  async toggleOpen(id) {
+    const c = this.contests.find((x) => x.id === id);
+    if (!c) return;
+    const open = !c.is_open;
+    const ok = await modal({
+      title: open ? "Qiymətləndirmə açılsın?" : "Qiymətləndirmə bağlansın?",
+      body: open
+        ? `<p><strong>${esc(c.name)}</strong> üzrə jürilər bal seçib təsdiqləyə biləcək.</p>`
+        : `<p><strong>${esc(c.name)}</strong> üzrə jürilər yeni bal təsdiqləyə bilməyəcək. Artıq təsdiqlənmiş ballar saxlanılır; istənilən vaxt yenidən aça bilərsiniz.</p>`,
+      confirmText: open ? "Aç" : "Bağla",
+      onConfirm: () => api("POST", `/api/admin/contests/${id}/status`, { is_open: open }),
+    });
+    if (ok) { toast(open ? "Qiymətləndirmə açıldı." : "Qiymətləndirmə bağlandı."); this.route(); }
   },
   route() {
     if (!ME || ME.role !== "admin") return;
@@ -371,16 +440,30 @@ const AdminApp = {
     document.title = `${sec ? sec.title : "Parolu dəyiş"} — Qiymətləndirmə portalı`;
     const main = $("#main");
     main.innerHTML = loadingBox();
-    main.onclick = null;
-    main.oninput = null;
-    const view = Views[id];
-    Promise.resolve(view(main)).catch((err) => {
-      if (err.status === 401) return;
-      main.innerHTML = errorBox(err.message);
-      $("[data-retry]", main)?.addEventListener("click", () => this.route());
-    });
     main.focus({ preventScroll: true });
     window.scrollTo(0, 0);
+    const token = (this._token = (this._token || 0) + 1);
+    const fail = (err) => {
+      if (err.status === 401 || token !== this._token) return;
+      main.innerHTML = errorBox(err.message);
+      $("[data-retry]", main)?.addEventListener("click", () => this.route());
+    };
+    this.loadContests().then(() => {
+      if (token !== this._token) return;
+      const scoped = !(sec && sec.global) && id !== "hesab";
+      if (scoped && CUR === null) { location.hash = "#/musabiqeler"; return; }
+      main.innerHTML = `${scoped ? this.contestBar() : ""}<div id="view">${loadingBox()}</div>`;
+      $("[data-toggle-open]", main)?.addEventListener("click", (e) => this.toggleOpen(+e.currentTarget.dataset.toggleOpen));
+      const view = $("#view");
+      return Promise.resolve(Views[id](view));
+    }).catch((err) => {
+      // Müsabiqə başqa sessiyada silinibsə, siyahını yeniləyib yenidən cəhd edirik.
+      if (err.status === 404 && /Müsabiqə tapılmadı/.test(err.message) && !this._retried) {
+        this._retried = true;
+        return this.route();
+      }
+      fail(err);
+    }).finally(() => { this._retried = false; });
   },
   refresh() { this.route(); },
 };
@@ -396,9 +479,146 @@ const lockNotice = (contest, what) => contest.structure_locked ? `
   <div class="alert alert-info">${icon("lock")}<div>${what} İlk qiymətləndirmə ${esc(fmtTime(contest.locked_at))} tarixində təsdiqləndiyi üçün kilidlənib. Adları redaktə etmək mümkündür.</div></div>` : "";
 
 const Views = {
+  // ------------------------------------------------------------ Müsabiqələr
+  musabiqeler(main) {
+    const list = AdminApp.contests;
+    main.innerHTML = `
+      ${pageHead("Müsabiqələr", "Yeni müsabiqə yaradın, seçin, qiymətləndirməni açın və ya bağlayın.")}
+      <div class="stack">
+        <form class="card stack enter" id="new-contest" novalidate>
+          <h2>Yeni müsabiqə</h2>
+          <div class="field"><label for="nc-name">Müsabiqənin adı</label>
+            <input class="input" id="nc-name" maxlength="200" required></div>
+          <fieldset class="stack-sm" style="border:0;padding:0;margin:0">
+            <legend class="label" style="margin-bottom:8px">Qiymətləndirmə tipi</legend>
+            <div class="type-options">
+              ${["unique", "scale5", "custom"].map((t, i) => `
+                <label class="type-opt">
+                  <input type="radio" name="nc-type" value="${t}" ${i === 0 ? "checked" : ""}>
+                  <span class="box"><span class="t"><span class="dot"></span>${esc(TYPE_HELP[t].label)}</span><span class="d">${esc(TYPE_HELP[t].short)}</span></span>
+                </label>`).join("")}
+            </div>
+          </fieldset>
+          <div class="field hidden" id="nc-max-field" style="max-width:260px">
+            <label for="nc-max">Maksimum bal</label>
+            <input class="input" id="nc-max" type="number" inputmode="numeric" min="2" max="100" step="1" value="10">
+            <span class="hint">2 ilə 100 arasında tam ədəd.</span>
+          </div>
+          <div class="row" style="gap:10px 16px">
+            <label class="row" style="gap:8px;min-height:44px;cursor:pointer"><input type="checkbox" id="nc-seed" checked style="width:20px;height:20px"> Nümunə komanda və 5 standart meyarla başla</label>
+            <div class="row" id="nc-count-wrap" style="gap:8px"><label for="nc-count">Komanda sayı</label>
+              <input class="input" id="nc-count" type="number" inputmode="numeric" min="0" max="100" step="1" value="10" style="width:100px"></div>
+          </div>
+          <p class="hint">Yeni müsabiqə <strong>bağlı</strong> vəziyyətdə yaradılır. Komanda, meyar və jüriləri hazırladıqdan sonra qiymətləndirməni açın. Jüri hesabları hər müsabiqə üçün ayrıca yaradılır.</p>
+          <div id="nc-err" role="alert"></div>
+          <div><button class="btn btn-primary" type="submit">${icon("plus")} Müsabiqə yarat</button></div>
+        </form>
+        <div class="stack-sm">
+          <h2>Bütün müsabiqələr <span class="muted num" style="font-weight:500">(${list.length})</span></h2>
+          ${list.length ? `<div class="contest-list">${list.map((c) => `
+            <article class="card contest-item enter ${c.id === CUR ? "is-current" : ""}">
+              <div class="row" style="gap:8px">
+                <h3 style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(c.name)}</h3>
+                ${c.id === CUR ? `<span class="chip chip-info">${icon("check")} Seçilib</span>` : ""}
+                ${c.is_open ? `<span class="chip chip-ok">${icon("play")} Açıq</span>` : `<span class="chip chip-muted">${icon("stop")} Bağlı</span>`}
+              </div>
+              <div class="contest-meta small">
+                <span>${esc(c.summary)}</span>
+                <span class="num">${c.progress.teams} komanda · ${c.criteria_count} meyar · ${c.progress.juries} jüri</span>
+                <span class="num">Qiymətləndirmə: ${c.progress.completed} / ${c.progress.expected} (${c.progress.percent}%)</span>
+                <span class="muted">Yaradılıb: ${esc(fmtTime(c.created_at))}</span>
+              </div>
+              <div class="progress sm" data-cp="${c.id}" role="progressbar" aria-label="${esc(c.name)} irəliləyişi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.progress.percent}"><span></span></div>
+              <div class="row" style="gap:6px">
+                ${c.id !== CUR ? `<button class="btn btn-secondary btn-sm" data-pick="${c.id}">Seç</button>` : `<a class="btn btn-secondary btn-sm" href="#/icmal">İcmala keç</a>`}
+                <button class="btn btn-ghost btn-sm" data-toggle-open="${c.id}">${c.is_open ? `${icon("stop", "sm")} Bağla` : `${icon("play", "sm")} Aç`}</button>
+                <div class="spacer"></div>
+                <button class="btn btn-danger-ghost btn-sm" data-del-contest="${c.id}" ${list.length <= 1 ? 'disabled title="Ən azı bir müsabiqə qalmalıdır"' : ""}>${icon("trash", "sm")} Sil</button>
+              </div>
+            </article>`).join("")}</div>` : `<div class="card empty">${icon("layers")}<p>Hələ müsabiqə yoxdur.</p></div>`}
+        </div>
+      </div>`;
+    list.forEach((c) => setProgress($(`[data-cp="${c.id}"]`, main), c.progress.percent));
+
+    const form = $("#new-contest");
+    const syncForm = () => {
+      const t = $("input[name=nc-type]:checked", form).value;
+      $("#nc-max-field").classList.toggle("hidden", t !== "custom");
+      $("#nc-count-wrap").classList.toggle("hidden", !$("#nc-seed").checked);
+    };
+    form.addEventListener("change", syncForm);
+    syncForm();
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errEl = $("#nc-err");
+      const fail = (m, el) => { errEl.innerHTML = `<div class="alert alert-error">${icon("alert")}<div>${esc(m)}</div></div>`; el?.focus(); };
+      errEl.innerHTML = "";
+      const name = $("#nc-name").value.trim();
+      const eval_type = $("input[name=nc-type]:checked", form).value;
+      const seed = $("#nc-seed").checked;
+      if (!name) return fail("Müsabiqənin adını daxil edin.", $("#nc-name"));
+      let custom_max = null;
+      if (eval_type === "custom") {
+        const raw = $("#nc-max").value.trim();
+        if (!/^\d+$/.test(raw) || +raw < 2 || +raw > 100) return fail("Maksimum bal 2 ilə 100 arasında tam ədəd olmalıdır.", $("#nc-max"));
+        custom_max = +raw;
+      }
+      let team_count = 0;
+      if (seed) {
+        const raw = $("#nc-count").value.trim();
+        if (!/^\d+$/.test(raw) || +raw > 100) return fail("Komanda sayı 0 ilə 100 arasında tam ədəd olmalıdır.", $("#nc-count"));
+        team_count = +raw;
+      }
+      const btn = $("button[type=submit]", form);
+      setBusy(btn, true, "Yaradılır…");
+      try {
+        const r = await api("POST", "/api/admin/contests", { name, eval_type, custom_max, seed_defaults: seed, team_count });
+        AdminApp.select(r.contest.id);
+        toast(`«${name}» yaradıldı və seçildi.`);
+        location.hash = "#/icmal";
+      } catch (er) { setBusy(btn, false); fail(er.message); }
+    });
+
+    main.onclick = async (e) => {
+      const pick = e.target.closest("[data-pick]"), tog = e.target.closest("[data-toggle-open]"), del = e.target.closest("[data-del-contest]");
+      if (pick) {
+        AdminApp.select(+pick.dataset.pick);
+        toast(`Seçildi: «${AdminApp.current().name}».`, "info");
+        location.hash = "#/icmal";
+      } else if (tog) {
+        AdminApp.toggleOpen(+tog.dataset.toggleOpen);
+      } else if (del) {
+        const c = AdminApp.contests.find((x) => x.id === +del.dataset.delContest);
+        const ok = await modal({
+          title: "Müsabiqə həmişəlik silinsin?",
+          body: `
+            <p><strong>${esc(c.name)}</strong> müsabiqəsi bütün məlumatları ilə birlikdə silinəcək:</p>
+            <div class="kv">
+              <div>Komandalar</div><div class="v">${c.progress.teams}</div>
+              <div>Meyarlar</div><div class="v">${c.criteria_count}</div>
+              <div>Jüri hesabları</div><div class="v">${c.progress.juries}</div>
+              <div>Təsdiqlənmiş qiymətləndirmələr</div><div class="v">${c.progress.completed}</div>
+            </div>
+            <div class="alert alert-error">${icon("alert")}<div>Bu əməliyyat geri qaytarılmır. Nəticələri saxlamaq istəyirsinizsə, əvvəlcə <a href="/api/admin/contests/${c.id}/results.csv" download>CSV faylını yükləyin</a>.</div></div>
+            <div class="field"><label for="del-name">Təsdiq üçün müsabiqənin adını yazın: <strong>${esc(c.name)}</strong></label>
+              <input class="input" id="del-name" autocomplete="off" spellcheck="false"></div>`,
+          confirmText: "Həmişəlik sil", danger: true,
+          onOpen: (dl) => {
+            const ok = $("[data-ok]", dl), inp = $("#del-name", dl);
+            ok.disabled = true;
+            inp.addEventListener("input", () => { ok.disabled = inp.value.trim() !== c.name; });
+            inp.focus();
+          },
+          onConfirm: (dl) => api("POST", `/api/admin/contests/${c.id}/delete`, { confirm_name: $("#del-name", dl).value.trim() }),
+        });
+        if (ok) { toast(`«${c.name}» silindi.`); AdminApp.route(); }
+      }
+    };
+  },
+
   // ------------------------------------------------------------ İcmal
   async icmal(main) {
-    const d = await api("GET", "/api/admin/overview");
+    const d = await api("GET", `${ADM()}/overview`);
     const p = d.progress, c = d.contest;
     main.innerHTML = `
       ${pageHead("İcmal", esc(c.name))}
@@ -434,7 +654,7 @@ const Views = {
 
   // ------------------------------------------------------------ Ayarlar
   async ayarlar(main) {
-    const d = await api("GET", "/api/admin/contest");
+    const d = await api("GET", `${ADM()}/contest`);
     const c = d.contest;
     const locked = c.structure_locked;
     main.innerHTML = `
@@ -501,7 +721,7 @@ const Views = {
       const btn = $("button[type=submit]", form);
       setBusy(btn, true, "Yadda saxlanılır…");
       try {
-        await api("PUT", "/api/admin/contest", { name, eval_type, custom_max, version: c.version });
+        await api("PUT", `${ADM()}/contest`, { name, eval_type, custom_max, version: c.version });
         toast("Ayarlar yadda saxlanıldı.");
         AdminApp.refresh();
       } catch (er) {
@@ -517,7 +737,7 @@ const Views = {
 
   // ------------------------------------------------------------ Jürilər
   async juriler(main) {
-    const d = await api("GET", "/api/admin/juries");
+    const d = await api("GET", `${ADM()}/juries`);
     const p = d.progress;
     main.innerHTML = `
       ${pageHead("Jürilər", `Gözlənilən qiymətləndirmə sayı: ${p.teams} komanda × ${p.juries} jüri = <strong class="num">${p.expected}</strong>`)}
@@ -565,7 +785,7 @@ const Views = {
       const btn = $("button[type=submit]", e.target);
       setBusy(btn, true, "Yaradılır…");
       try {
-        await api("POST", "/api/admin/juries", { username, password });
+        await api("POST", `${ADM()}/juries`, { username, password });
         toast(`«${username}» jüri hesabı yaradıldı.`);
         AdminApp.refresh();
       } catch (er) { setBusy(btn, false); fail(er.message); }
@@ -579,7 +799,7 @@ const Views = {
           body: `<div class="field"><label for="m-user">Yeni istifadəçi adı</label><input class="input" id="m-user" maxlength="50" value="${esc(j.username)}" autocapitalize="none" spellcheck="false"></div>`,
           confirmText: "Yadda saxla",
           onOpen: (dl) => $("#m-user", dl).select(),
-          onConfirm: (dl) => api("PATCH", `/api/admin/juries/${j.id}`, { username: $("#m-user", dl).value.trim(), version: j.version }),
+          onConfirm: (dl) => api("PATCH", `${ADM()}/juries/${j.id}`, { username: $("#m-user", dl).value.trim(), version: j.version }),
         });
         if (ok) { toast("İstifadəçi adı dəyişdirildi."); AdminApp.refresh(); }
       } else if (pw) {
@@ -592,7 +812,7 @@ const Views = {
           onConfirm: (dl) => {
             const v = $("#m-pass", dl).value;
             if (v.length < 8) throw new Error("Parol ən azı 8 simvoldan ibarət olmalıdır.");
-            return api("POST", `/api/admin/juries/${j.id}/password`, { password: v });
+            return api("POST", `${ADM()}/juries/${j.id}/password`, { password: v });
           },
         });
         if (ok) toast("Yeni parol təyin edildi.");
@@ -602,7 +822,7 @@ const Views = {
           title: "Jüri hesabını sil",
           body: `<p><strong>${esc(j.username)}</strong> hesabı silinəcək. Bu əməliyyatı geri qaytarmaq mümkün deyil.</p>`,
           confirmText: "Sil", danger: true,
-          onConfirm: () => api("DELETE", `/api/admin/juries/${j.id}`),
+          onConfirm: () => api("DELETE", `${ADM()}/juries/${j.id}`),
         });
         if (ok) { toast("Jüri hesabı silindi."); AdminApp.refresh(); }
       }
@@ -611,7 +831,7 @@ const Views = {
 
   // ------------------------------------------------------------ Qiymətləndirmələr
   async qiymetlendirmeler(main) {
-    const list = await api("GET", "/api/admin/juries");
+    const list = await api("GET", `${ADM()}/juries`);
     if (!list.items.length) {
       main.innerHTML = `${pageHead("Qiymətləndirmələr")}<div class="card empty">${icon("clipboard")}<p>Jüri hesabı yoxdur. <a href="#/juriler">Jüri əlavə edin</a>.</p></div>`;
       return;
@@ -632,10 +852,10 @@ const Views = {
 
   // ------------------------------------------------------------ Nəticələr
   async neticeler(main) {
-    const r = await api("GET", "/api/admin/results");
+    const r = await api("GET", `${ADM()}/results`);
     const c = r.contest, p = r.progress;
     main.innerHTML = `
-      ${pageHead(p.status_label, esc(c.name), `<a class="btn btn-secondary" href="/api/admin/results.csv" download>${icon("download")} CSV yüklə</a>`)}
+      ${pageHead(p.status_label, esc(c.name), `<a class="btn btn-secondary" href="${ADM()}/results.csv" download>${icon("download")} CSV yüklə</a>`)}
       <div class="stack">
         <div class="card enter row" style="gap:16px 28px">
           <div>${statusChip(p.final)}</div>
@@ -683,7 +903,7 @@ const Views = {
       if (reset) { offset = 0; listEl.innerHTML = loadingBox(); }
       setBusy(more, true, "Yüklənir…");
       try {
-        const d = await api("GET", `/api/admin/audit?offset=${offset}&limit=50&only_admin=${onlyAdmin}`);
+        const d = await api("GET", `${ADM()}/audit?offset=${offset}&limit=50&only_admin=${onlyAdmin}`);
         if (reset) listEl.innerHTML = "";
         if (!d.items.length && offset === 0) listEl.innerHTML = `<div class="empty">${icon("history")}<p>Hələ heç bir qeyd yoxdur.</p></div>`;
         listEl.insertAdjacentHTML("beforeend", d.items.map(auditItem).join(""));
@@ -754,7 +974,7 @@ function auditItem(a) {
 
 // ------------------------------------------------------------ Komanda/Meyar ümumi görünüşü
 async function entityView(main, cfg) {
-  const d = await api("GET", `/api/admin/${cfg.path}`);
+  const d = await api("GET", `${ADM()}/${cfg.path}`);
   const locked = d.structure_locked;
   const c = d.contest;
   const rangeNote = cfg.path === "teams"
@@ -794,7 +1014,7 @@ async function entityView(main, cfg) {
     const btn = $("button[type=submit]", e.target);
     setBusy(btn, true, "Əlavə edilir…");
     try {
-      await api("POST", `/api/admin/${cfg.path}`, { name });
+      await api("POST", `${ADM()}/${cfg.path}`, { name });
       toast(`«${name}» əlavə edildi.`);
       AdminApp.refresh();
     } catch (er) { setBusy(btn, false); errEl.innerHTML = `<div class="alert alert-error">${icon("alert")}<div>${esc(er.message)}</div></div>`; }
@@ -820,7 +1040,7 @@ async function entityView(main, cfg) {
         const btn = $("button[type=submit]", li);
         setBusy(btn, true, "…");
         try {
-          await api("PATCH", `/api/admin/${cfg.path}/${it.id}`, { name: inp.value.trim(), version: it.version });
+          await api("PATCH", `${ADM()}/${cfg.path}/${it.id}`, { name: inp.value.trim(), version: it.version });
           toast("Ad dəyişdirildi.");
           AdminApp.refresh();
         } catch (er) { setBusy(btn, false); toast(er.message, "error"); inp.setAttribute("aria-invalid", "true"); }
@@ -830,7 +1050,7 @@ async function entityView(main, cfg) {
         title: `${cfg.one} silinsin?`,
         body: `<p><strong>${esc(it.name)}</strong> siyahıdan silinəcək.</p>`,
         confirmText: "Sil", danger: true,
-        onConfirm: () => api("DELETE", `/api/admin/${cfg.path}/${it.id}`),
+        onConfirm: () => api("DELETE", `${ADM()}/${cfg.path}/${it.id}`),
       });
       if (ok) { toast(`«${it.name}» silindi.`); AdminApp.refresh(); }
     }
@@ -842,7 +1062,7 @@ async function loadJuryEvals(jid) {
   const body = $("#ev-body");
   body.innerHTML = loadingBox();
   let d;
-  try { d = await api("GET", `/api/admin/juries/${jid}/evaluations`); } catch (err) {
+  try { d = await api("GET", `${ADM()}/juries/${jid}/evaluations`); } catch (err) {
     body.innerHTML = errorBox(err.message);
     $("[data-retry]", body)?.addEventListener("click", () => loadJuryEvals(jid));
     return;
@@ -933,7 +1153,7 @@ async function loadJuryEvals(jid) {
     const btn = $("#ev-save");
     setBusy(btn, true, "Yadda saxlanılır…");
     try {
-      await api("PUT", `/api/admin/juries/${jid}/evaluations`, { changes });
+      await api("PUT", `${ADM()}/juries/${jid}/evaluations`, { changes });
       toast(`Ballar yeniləndi (${changes.length} komanda).`);
       loadJuryEvals(jid);
     } catch (err) {
@@ -954,7 +1174,7 @@ async function loadJuryEvals(jid) {
         <div class="kv">${d.criteria.map((cr) => `<div>${esc(cr.name)}</div><div class="v">${ev.scores[cr.id]}</div>`).join("")}</div>
         <div class="alert alert-warn">${icon("alert")}<div>Kilid açıldıqda bu komanda üzrə bütün ballar silinəcək və jüri komandanı yenidən qiymətləndirməli olacaq.${c.eval_type === "unique" ? " Silinən ballar həmin jüri üçün yenidən istifadəyə açılacaq." : ""} Müsabiqənin struktur kilidi qüvvədə qalır.</div></div>`,
       confirmText: "Kilidi aç və balları sil", danger: true,
-      onConfirm: () => api("POST", `/api/admin/evaluations/${ev.id}/unlock`, { version: ev.version }),
+      onConfirm: () => api("POST", `${ADM()}/evaluations/${ev.id}/unlock`, { version: ev.version }),
     });
     if (ok) { toast(`«${t.name}» üzrə kilid açıldı.`); loadJuryEvals(jid); }
   };
@@ -1039,6 +1259,7 @@ const JuryApp = {
     main.innerHTML = `
       <div class="stack">
         <div><h1>${esc(c.name)}</h1></div>
+        ${c.is_open ? "" : `<div class="alert alert-warn enter" role="status">${icon("stop")}<div><strong>Qiymətləndirmə hazırda bağlıdır.</strong> Admin açdıqdan sonra davam edə bilərsiniz. Təsdiqlənmiş ballarınız saxlanılıb.</div></div>`}
         <div class="jury-summary">
           <div class="card stack-sm enter">
             <div class="row" style="gap:8px"><span class="chip chip-info">${esc(c.type_label)}</span><span class="chip chip-muted num">Bal aralığı: ${esc(c.range_label)}</span></div>
@@ -1157,6 +1378,7 @@ const JuryApp = {
 
   syncCard(card, use) {
     const tid = card.dataset.team;
+    const closed = !this.st.contest.is_open;
     const d = this.drafts[tid] || {};
     const crits = this.st.criteria;
     let filled = 0;
@@ -1172,12 +1394,13 @@ const JuryApp = {
       const isDraftElsewhere = (val) => usedDraft[val] !== undefined && usedDraft[val] !== tid;
       const sel = $(`select[data-crit="${cr.id}"]`, card);
       if (sel) {
+        sel.disabled = closed;
         sel.value = v ? String(v) : "";
         $$("option", sel).forEach((o) => {
           if (!o.value) return;
           const n = +o.value;
           const used = isUsed(n), dr = isDraftElsewhere(n);
-          o.disabled = used || dr;
+          o.disabled = closed || used || dr;
           o.textContent = used ? `${n} — istifadə olunub` : dr ? `${n} — başqa kartda seçilib` : String(n);
         });
       } else {
@@ -1185,7 +1408,7 @@ const JuryApp = {
           const n = +inp.value;
           inp.checked = v === n;
           const used = isUsed(n), dr = isDraftElsewhere(n);
-          inp.disabled = used || dr;
+          inp.disabled = closed || used || dr;
           const span = inp.nextElementSibling;
           if (used) span.title = `İstifadə olunub («${usedConf[n]}»)`;
           else if (dr) span.title = "Başqa kartda seçilib (təsdiqlənməyib)";
@@ -1204,10 +1427,13 @@ const JuryApp = {
     }
     const complete = filled === crits.length;
     const btn = $("[data-confirm]", card);
-    if (!this.saving.has(tid)) btn.disabled = !complete;
-    btn.setAttribute("aria-disabled", String(!complete));
+    if (!this.saving.has(tid)) btn.disabled = !complete || closed;
+    btn.setAttribute("aria-disabled", String(!complete || closed));
     $("[data-count]", card).textContent = `${filled} / ${crits.length} meyar seçilib`;
-    $("[data-clear]", card).classList.toggle("hidden", filled === 0);
+    $("[data-clear]", card).classList.toggle("hidden", filled === 0 || closed);
+    const chip = $("[data-status]", card);
+    chip.className = `chip ${closed ? "chip-muted" : "chip-warn"}`;
+    chip.innerHTML = closed ? `${icon("stop")} Bağlıdır` : `${icon("clock")} Gözləyir`;
     card.classList.toggle("complete", complete);
   },
 
@@ -1281,6 +1507,7 @@ const JuryApp = {
           this.st = await api("GET", "/api/jury/state");
           const msg = $(".card-error", card).innerHTML;
           if (this.confirmedMap()[tid]) { this.cleanDrafts(); this.render(); return; }
+          if (!this.st.contest.is_open) { this.render(); toast(err.message, "error"); return; }
           this.syncAll();
           $(".card-error", card).innerHTML = msg;
         } catch { /* */ }

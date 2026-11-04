@@ -31,7 +31,7 @@ BAD_LOGIN = "İstifadəçi adı və ya parol yanlışdır."
 
 
 def user_payload(u: User) -> dict:
-    return {"id": u.id, "username": u.username, "role": u.role}
+    return {"id": u.id, "username": u.username, "role": u.role, "contest_id": u.contest_id}
 
 
 @router.post("/login")

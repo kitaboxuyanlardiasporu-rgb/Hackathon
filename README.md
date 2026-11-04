@@ -5,6 +5,10 @@ Texniki baza: **FastAPI** (backend), **PostgreSQL** (verilənlər bazası) və a
 
 ## Nə hazırdır
 
+- **Bir neçə müsabiqə:** admin **Müsabiqələr** bölməsində yeni müsabiqə yaradır, yan menyudakı seçici ilə müsabiqələr arasında keçir və köhnə müsabiqəni həmişəlik silir. Silmədən əvvəl müsabiqənin adı yazılaraq təsdiqlənir və nəticələri CSV kimi yükləmək təklif olunur. Sonuncu müsabiqəni silmək olmur.
+- **Qiymətləndirməni açmaq və bağlamaq:** hər müsabiqə üçün ayrıca idarə olunur və bir neçə müsabiqə eyni vaxtda açıq ola bilər. Bağlı müsabiqədə jüri yeni bal təsdiqləyə bilmir, amma təsdiqlənmiş balları saxlanılır. Yeni müsabiqə bağlı vəziyyətdə yaradılır.
+- **Jürilər:** hər müsabiqənin öz jüri hesabları var. İstifadəçi adı bütün portal üzrə unikaldır. Müsabiqə silinəndə onun jüri hesabları da silinir.
+
 - **Giriş:** admin və jüri eyni səhifədən daxil olur. Sessiya HttpOnly cookie ilə saxlanılır. Parollar scrypt ilə, duzlanmış heş kimi saxlanılır. Uğursuz giriş cəhdləri limitlənir.
 - **Qiymətləndirmə tipləri:**
   - Unikal bal (1–N, təkrarsız). Bu qayda verilənlər bazasında unikal indekslə də qorunur.
@@ -65,7 +69,11 @@ Render-də isə: **Database → Backups**.
 
 ## Yeniləmə
 
-Kodu yeniləyib yenidən yayımlamaq kifayətdir (`docker compose up -d --build` və ya Render-də avtomatik yayım). Yeni sütunlar avtomatik əlavə olunur. Mövcud hesablar, ballar və ayarlar saxlanılır. Qiymətləndirmə tipi qeyd olunmamış köhnə müsabiqələr "Unikal bal" kimi qəbul edilir.
+Yeniləmədən əvvəl həmişə nəticələri CSV kimi yükləyin; Render-in ödənişli planındasınızsa, bazanın ehtiyat nüsxəsini də çıxarın.
+
+Kodu yeniləyib yenidən yayımlamaq kifayətdir (`docker compose up -d --build` və ya Render-də avtomatik yayım). Yeni sütunlar avtomatik əlavə olunur. Mövcud hesablar, ballar və ayarlar saxlanılır. Qiymətləndirmə tipi qeyd olunmamış köhnə müsabiqələr "Unikal bal" kimi qəbul edilir. Tək müsabiqəli köhnə versiyadan keçəndə bütün komanda, meyar, jüri və ballar birinci müsabiqəyə bağlanır və o müsabiqə açıq qalır.
+
+> GitHub-a brauzerdən yükləyəndə qovluqlar itə və bütün fayllar reponun kökünə düşə bilər. Dockerfile bunu nəzərə alır: `app/` qovluğu yoxdursa, quruluşu yayım zamanı özü bərpa edir.
 
 ## Testlər (tərtibatçılar üçün)
 
@@ -74,7 +82,7 @@ pip install -r requirements-dev.txt
 DATABASE_URL=postgresql://USER:PASS@localhost/portal_test pytest -q
 ```
 
-27 avtomatik test aşağıdakıları yoxlayır: hər üç tipin qaydaları, kilidlər, rollar, nəticələrin hesablanması, bərabər balların sıralanması, CSV ixracı, paralel sorğular və miqrasiya.
+32 avtomatik test aşağıdakıları yoxlayır: hər üç tipin qaydaları, kilidlər, rollar, nəticələrin hesablanması, bərabər balların sıralanması, CSV ixracı, paralel sorğular, miqrasiya, müsabiqələrin bir-birindən ayrılığı, qiymətləndirmənin açılıb-bağlanması və müsabiqənin silinməsi.
 
 ## Mühit dəyişənləri
 
