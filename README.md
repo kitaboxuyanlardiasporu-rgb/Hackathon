@@ -5,6 +5,9 @@ Texniki baza: **FastAPI** (backend), **PostgreSQL** (verilənlər bazası) və a
 
 ## Nə hazırdır
 
+- **Operatorlar:** admin **Operatorlar** bölməsində operator yaradır və ona icazələr verir: müsabiqə yaratmaq və ayarlamaq, jüri əlavə etmək, komandaları müəyyənləşdirmək, meyarları müəyyənləşdirmək, qiymətləndirməni açıb-bağlamaq, müsabiqə məlumatlarını sıfırlamaq. Operator **yalnız özünün yaratdığı müsabiqələri** görür. Müsabiqəni silmək, balları redaktə etmək, nəticələr, tarixçə və operatorların idarəsi yalnız admindədir. İcazələr hər sorğuda serverdə yoxlanılır.
+- **Sıfırlama:** müsabiqənin bütün balları silinir (istəyə görə jürilər, komandalar və meyarlar da), struktur kilidi açılır. Adı yazmaqla təsdiqlənir, silinən ballar tarixçədə qalır.
+- **Jüri ekranı:** hər komanda kartında komandanın altında meyarlar, hər meyar üçün açılan siyahı.
 - **Bir neçə müsabiqə:** admin **Müsabiqələr** bölməsində yeni müsabiqə yaradır, yan menyudakı seçici ilə müsabiqələr arasında keçir və köhnə müsabiqəni həmişəlik silir. Silmədən əvvəl müsabiqənin adı yazılaraq təsdiqlənir və nəticələri CSV kimi yükləmək təklif olunur. Sonuncu müsabiqəni də silmək olar; o zaman admin yeni müsabiqə yaradır.
 - **Qiymətləndirməni açmaq və bağlamaq:** hər müsabiqə üçün ayrıca idarə olunur və bir neçə müsabiqə eyni vaxtda açıq ola bilər. Bağlı müsabiqədə jüri yeni bal təsdiqləyə bilmir, amma təsdiqlənmiş balları saxlanılır. Yeni müsabiqə bağlı vəziyyətdə yaradılır.
 - **Jürilər:** hər müsabiqənin öz jüri hesabları var. İstifadəçi adı bütün portal üzrə unikaldır. Müsabiqə silinəndə onun jüri hesabları da silinir. Təsdiqlənmiş balı olan jürini də silmək olar: istifadəçi adını yazıb təsdiqləyəndə hesab balları ilə birlikdə silinir, silinən ballar isə tarixçədə saxlanılır.
@@ -82,7 +85,7 @@ pip install -r requirements-dev.txt
 DATABASE_URL=postgresql://USER:PASS@localhost/portal_test pytest -q
 ```
 
-32 avtomatik test aşağıdakıları yoxlayır: hər üç tipin qaydaları, kilidlər, rollar, nəticələrin hesablanması, bərabər balların sıralanması, CSV ixracı, paralel sorğular, miqrasiya, müsabiqələrin bir-birindən ayrılığı, qiymətləndirmənin açılıb-bağlanması və müsabiqənin silinməsi.
+44 avtomatik test aşağıdakıları yoxlayır: hər üç tipin qaydaları, kilidlər, rollar, nəticələrin hesablanması, bərabər balların sıralanması, CSV ixracı, paralel sorğular, miqrasiya, müsabiqələrin bir-birindən ayrılığı, qiymətləndirmənin açılıb-bağlanması və müsabiqənin silinməsi, operator icazələri və sıfırlama.
 
 ## Mühit dəyişənləri
 

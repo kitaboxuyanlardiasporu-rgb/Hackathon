@@ -438,9 +438,41 @@ const AdminApp = {
           ? `<span class="chip chip-ok">${icon("play")} Qiymətləndirmə açıqdır</span>`
           : `<span class="chip chip-muted">${icon("stop")} Qiymətləndirmə bağlıdır</span>`}
         <div class="spacer"></div>
-        ${isAdmin() ? `<button class="btn ${c.is_open ? "btn-secondary" : "btn-primary"} btn-sm" data-toggle-open="${c.id}">
+        ${can("open_close") ? `<button class="btn ${c.is_open ? "btn-secondary" : "btn-primary"} btn-sm" data-toggle-open="${c.id}">
           ${c.is_open ? `${icon("stop", "sm")} Qiymətləndirməni bağla` : `${icon("play", "sm")} Qiymətləndirməni aç`}</button>` : ""}
       </div>`;
+  },
+  async resetContest(id) {
+    const c = this.contests.find((x) => x.id === id);
+    if (!c) return;
+    const ok = await modal({
+      title: "Müsabiqə məlumatları sıfırlansın?",
+      body: `
+        <p><strong>${esc(c.name)}</strong> üzrə bütün təsdiqlənmiş ballar (<strong>${c.progress.completed}</strong> qiymətləndirmə) silinəcək. Bundan sonra qiymətləndirmə tipini, komanda və meyar sayını yenidən dəyişmək olar.</p>
+        <fieldset class="perm-grid" style="grid-template-columns:1fr">
+          <legend class="label">Bunları da silmək istəyirsinizsə, seçin:</legend>
+          <label class="perm-opt"><input type="checkbox" name="rs" value="juries"><span>Jüri hesabları (${c.progress.juries})</span></label>
+          <label class="perm-opt"><input type="checkbox" name="rs" value="teams"><span>Komandalar (${c.progress.teams})</span></label>
+          <label class="perm-opt"><input type="checkbox" name="rs" value="criteria"><span>Meyarlar (${c.criteria_count})</span></label>
+        </fieldset>
+        <div class="alert alert-error">${icon("alert")}<div>Bu əməliyyat geri qaytarılmır. Silinən ballar tarixçədə saxlanılır.</div></div>
+        <div class="field"><label for="rs-name">Təsdiq üçün müsabiqənin adını yazın: <strong>${esc(c.name)}</strong></label>
+          <input class="input" id="rs-name" autocomplete="off" spellcheck="false"></div>`,
+      confirmText: "Sıfırla", danger: true,
+      onOpen: (dl) => {
+        const okb = $("[data-ok]", dl), inp = $("#rs-name", dl);
+        okb.disabled = true;
+        inp.addEventListener("input", () => { okb.disabled = inp.value.trim() !== c.name; });
+      },
+      onConfirm: (dl) => {
+        const sel = $$("input[name=rs]:checked", dl).map((i) => i.value);
+        return api("POST", `/api/admin/contests/${id}/reset`, {
+          confirm_name: $("#rs-name", dl).value.trim(),
+          juries: sel.includes("juries"), teams: sel.includes("teams"), criteria: sel.includes("criteria"),
+        });
+      },
+    });
+    if (ok) { toast(`«${c.name}» sıfırlandı.`); this.route(); }
   },
   async toggleOpen(id) {
     const c = this.contests.find((x) => x.id === id);
@@ -544,7 +576,7 @@ const Views = {
           <div><button class="btn btn-primary" type="submit">${icon("plus")} Müsabiqə yarat</button></div>
         </form>` : ""}
         <div class="stack-sm">
-          <h2>Bütün müsabiqələr <span class="muted num" style="font-weight:500">(${list.length})</span></h2>
+          <h2>${isAdmin() ? "Bütün müsabiqələr" : "Mənim müsabiqələrim"} <span class="muted num" style="font-weight:500">(${list.length})</span></h2>
           ${list.length ? `<div class="contest-list">${list.map((c) => `
             <article class="card contest-item enter ${c.id === CUR ? "is-current" : ""}">
               <div class="row" style="gap:8px">
@@ -556,16 +588,17 @@ const Views = {
                 <span>${esc(c.summary)}</span>
                 <span class="num">${c.progress.teams} komanda · ${c.criteria_count} meyar · ${c.progress.juries} jüri</span>
                 <span class="num">Qiymətləndirmə: ${c.progress.completed} / ${c.progress.expected} (${c.progress.percent}%)</span>
-                <span class="muted">Yaradılıb: ${esc(fmtTime(c.created_at))}</span>
+                <span class="muted">Yaradılıb: ${esc(fmtTime(c.created_at))}${isAdmin() && c.created_by_username ? ` · ${esc(c.created_by_username)} (${(ROLE_LABEL[c.created_by_role] || "").toLowerCase()})` : ""}</span>
               </div>
               <div class="progress sm" data-cp="${c.id}" role="progressbar" aria-label="${esc(c.name)} irəliləyişi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.progress.percent}"><span></span></div>
               <div class="row" style="gap:6px">
                 ${c.id !== CUR ? `<button class="btn btn-secondary btn-sm" data-pick="${c.id}">Seç</button>` : `<a class="btn btn-secondary btn-sm" href="#/icmal">İcmala keç</a>`}
-                ${isAdmin() ? `<button class="btn btn-ghost btn-sm" data-toggle-open="${c.id}">${c.is_open ? `${icon("stop", "sm")} Bağla` : `${icon("play", "sm")} Aç`}</button>
+                ${can("open_close") ? `<button class="btn btn-ghost btn-sm" data-toggle-open="${c.id}">${c.is_open ? `${icon("stop", "sm")} Bağla` : `${icon("play", "sm")} Aç`}</button>` : ""}
                 <div class="spacer"></div>
-                <button class="btn btn-danger-ghost btn-sm" data-del-contest="${c.id}">${icon("trash", "sm")} Sil</button>` : ""}
+                ${can("reset") ? `<button class="btn btn-ghost btn-sm" data-reset-contest="${c.id}">${icon("refresh", "sm")} Sıfırla</button>` : ""}
+                ${isAdmin() ? `<button class="btn btn-danger-ghost btn-sm" data-del-contest="${c.id}">${icon("trash", "sm")} Sil</button>` : ""}
               </div>
-            </article>`).join("")}</div>` : `<div class="card empty">${icon("layers")}<p>Hələ müsabiqə yoxdur. Yuxarıdakı formadan yeni müsabiqə yaradın.</p></div>`}
+            </article>`).join("")}</div>` : `<div class="card empty">${icon("layers")}<p>${isAdmin() ? "Hələ müsabiqə yoxdur. Yuxarıdakı formadan yeni müsabiqə yaradın." : can("contests") ? "Sizin yaratdığınız müsabiqə yoxdur. Yuxarıdakı formadan yeni müsabiqə yaradın." : "Sizin yaratdığınız müsabiqə yoxdur. Müsabiqə yaratmaq icazəsi üçün adminə müraciət edin."}</p></div>`}
         </div>
       </div>`;
     list.forEach((c) => setProgress($(`[data-cp="${c.id}"]`, main), c.progress.percent));
@@ -613,6 +646,8 @@ const Views = {
 
     main.onclick = async (e) => {
       const pick = e.target.closest("[data-pick]"), tog = e.target.closest("[data-toggle-open]"), del = e.target.closest("[data-del-contest]");
+      const rst = e.target.closest("[data-reset-contest]");
+      if (rst) { AdminApp.resetContest(+rst.dataset.resetContest); return; }
       if (pick) {
         AdminApp.select(+pick.dataset.pick);
         toast(`Seçildi: «${AdminApp.current().name}».`, "info");
@@ -982,7 +1017,7 @@ const Views = {
       ? perms.map((k) => `<span class="chip chip-info">${icon("check")} ${esc(P.find((p) => p.key === k)?.label || k)}</span>`).join(" ")
       : `<span class="chip chip-muted">İcazə verilməyib</span>`;
     main.innerHTML = `
-      ${pageHead("Operatorlar", "Operator yalnız sizin verdiyiniz icazələr daxilində işləyir. Müsabiqəni silmək, qiymətləndirməni açıb-bağlamaq, balları redaktə etmək, nəticələr və tarixçə yalnız adminə məxsusdur.")}
+      ${pageHead("Operatorlar", "Operator yalnız özünün yaratdığı müsabiqələri görür və sizin verdiyiniz icazələr daxilində işləyir. Müsabiqəni silmək, balları redaktə etmək, nəticələr və tarixçə yalnız adminə məxsusdur.")}
       <div class="stack">
         <form class="card stack enter" id="op-form" novalidate>
           <h2>Yeni operator</h2>
@@ -991,7 +1026,7 @@ const Views = {
               <input class="input" id="op-user" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="50"></div>
             ${pwField("op-pass", "Parol", { hint: "Ən azı 8 simvol." })}
           </div>
-          ${permBoxes("new", ["contests", "juries", "teams", "criteria"])}
+          ${permBoxes("new", P.map((x) => x.key))}
           <div id="op-err" role="alert"></div>
           <div><button class="btn btn-primary" type="submit">${icon("plus")} Operator yarat</button></div>
         </form>
@@ -1403,7 +1438,7 @@ const JuryApp = {
     const done = teams.filter((t) => conf[t.id]).length;
     const pct = teams.length ? (done * 100) / teams.length : 0;
     const instr = c.eval_type === "unique"
-      ? `Hər meyar üzrə 1–${c.max} ballarından istifadə edin. Eyni meyarda bir bal yalnız bir komandaya verilə bilər; istifadə olunmuş ballar deaktiv göstərilir.`
+      ? `Hər meyar üzrə 1–${c.max} ballarından istifadə edin. Eyni meyarda bir bal yalnız bir komandaya verilə bilər; istifadə olunmuş ballar siyahıda «istifadə olunub» qeydi ilə deaktiv göstərilir.`
       : `Hər komandaya hər meyar üzrə 1–${c.max} aralığında tam bal verin. Eyni bal bir neçə komandaya verilə bilər.`;
     const main = $("#main");
     main.innerHTML = `
@@ -1472,30 +1507,21 @@ const JuryApp = {
           <p class="small muted">${icon("lock", "sm")} Ballar kilidlənib · ${esc(fmtTime(ev.confirmed_at))}</p>
         </article>`;
     }
-    const useSelect = c.max > 10;
-    const picker = (cr) => {
-      const name = `s-${t.id}-${cr.id}`;
-      if (useSelect) {
-        return `<select class="input" id="${name}" data-team="${t.id}" data-crit="${cr.id}" aria-describedby="un-${t.id}-${cr.id}">
-          <option value="">— Bal seçin —</option>
-          ${Array.from({ length: c.max }, (_, k) => `<option value="${k + 1}">${k + 1}</option>`).join("")}
-        </select>`;
-      }
-      return `<fieldset class="scores" aria-describedby="un-${t.id}-${cr.id}"><legend class="sr-only">${esc(cr.name)}</legend>
-        ${Array.from({ length: c.max }, (_, k) => k + 1).map((v) => `
-          <label class="score"><input type="radio" name="${name}" value="${v}" data-team="${t.id}" data-crit="${cr.id}"><span>${v}</span></label>`).join("")}
-      </fieldset>`;
-    };
+    // Hər meyar üçün açılan siyahı: komandanın adının altında meyarlar sıralanır.
     return `
       <article class="card team-card enter" data-team="${t.id}" ${delay} aria-labelledby="tn-${t.id}">
         <div class="team-head"><h3 id="tn-${t.id}">${esc(t.name)}</h3>
           <span class="chip chip-warn" data-status>${icon("clock")} Gözləyir</span></div>
+        <div class="crit-list">
         ${criteria.map((cr) => `
-          <div class="crit">
-            <div class="crit-label">${useSelect ? `<label for="s-${t.id}-${cr.id}">${esc(cr.name)}</label>` : `<span>${esc(cr.name)}</span>`}<span class="val" data-val="${cr.id}"></span></div>
-            ${picker(cr)}
-            <div class="used-note" id="un-${t.id}-${cr.id}" data-note="${cr.id}"></div>
+          <div class="crit-row">
+            <label for="s-${t.id}-${cr.id}">${esc(cr.name)}</label>
+            <select class="input" id="s-${t.id}-${cr.id}" data-team="${t.id}" data-crit="${cr.id}">
+              <option value="">Bal seçin</option>
+              ${Array.from({ length: c.max }, (_, k) => `<option value="${k + 1}">${k + 1}</option>`).join("")}
+            </select>
           </div>`).join("")}
+        </div>
         <div class="card-error" role="alert"></div>
         <div class="team-foot">
           <button class="btn btn-primary" data-confirm disabled>${icon("check")} Təsdiqlə</button>
@@ -1535,15 +1561,13 @@ const JuryApp = {
     for (const cr of crits) {
       const v = d[cr.id];
       if (v) filled++;
-      const valEl = $(`[data-val="${cr.id}"]`, card);
-      valEl.textContent = v ? `${v} bal` : "";
-      const note = $(`[data-note="${cr.id}"]`, card);
       const usedConf = use ? use.conf[cr.id] || {} : {};
       const usedDraft = use ? use.draft[cr.id] || {} : {};
       const isUsed = (val) => usedConf[val] !== undefined;
       const isDraftElsewhere = (val) => usedDraft[val] !== undefined && usedDraft[val] !== tid;
       const sel = $(`select[data-crit="${cr.id}"]`, card);
-      if (sel) {
+      sel.classList.toggle("has-value", !!v);
+      {
         sel.disabled = closed;
         sel.value = v ? String(v) : "";
         $$("option", sel).forEach((o) => {
@@ -1553,27 +1577,7 @@ const JuryApp = {
           o.disabled = closed || used || dr;
           o.textContent = used ? `${n} — istifadə olunub` : dr ? `${n} — başqa kartda seçilib` : String(n);
         });
-      } else {
-        $$(`input[data-crit="${cr.id}"]`, card).forEach((inp) => {
-          const n = +inp.value;
-          inp.checked = v === n;
-          const used = isUsed(n), dr = isDraftElsewhere(n);
-          inp.disabled = closed || used || dr;
-          const span = inp.nextElementSibling;
-          if (used) span.title = `İstifadə olunub («${usedConf[n]}»)`;
-          else if (dr) span.title = "Başqa kartda seçilib (təsdiqlənməyib)";
-          else span.removeAttribute("title");
-          inp.setAttribute("aria-label", used ? `${n} — istifadə olunub` : dr ? `${n} — başqa kartda seçilib` : `${n} bal`);
-        });
       }
-      if (use) {
-        const u = Object.keys(usedConf).map(Number).sort((a, b) => a - b);
-        const dr = Object.entries(usedDraft).filter(([, t]) => t !== tid).map(([val]) => +val).sort((a, b) => a - b);
-        const parts = [];
-        if (u.length) parts.push(`İstifadə olunub: ${u.join(", ")}`);
-        if (dr.length) parts.push(`Başqa kartda seçilib: ${dr.join(", ")}`);
-        note.textContent = parts.join(" · ");
-      } else note.textContent = "";
     }
     const complete = filled === crits.length;
     const btn = $("[data-confirm]", card);

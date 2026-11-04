@@ -93,3 +93,10 @@ class OperatorUpdateIn(BaseModel):
     username: str
     permissions: list[str]
     version: StrictInt
+
+
+class ContestResetIn(BaseModel):
+    confirm_name: str
+    juries: bool = False
+    teams: bool = False
+    criteria: bool = False

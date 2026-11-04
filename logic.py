@@ -62,9 +62,13 @@ def type_info(contest: Contest, n_teams: int) -> dict:
 
 def contest_payload(db: Session, contest: Contest) -> dict:
     n = team_count(db, contest.id)
+    creator = db.get(User, contest.created_by) if contest.created_by else None
     return {
         "id": contest.id,
         "name": contest.name,
+        "created_by": contest.created_by,
+        "created_by_username": creator.username if creator else None,
+        "created_by_role": creator.role if creator else None,
         "is_open": contest.is_open,
         "custom_max": contest.custom_max,
         "structure_locked": contest.structure_locked,

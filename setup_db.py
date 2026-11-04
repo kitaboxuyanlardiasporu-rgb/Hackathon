@@ -74,6 +74,22 @@ _MIGRATIONS = [
            ALTER TABLE users ADD CONSTRAINT ck_users_role CHECK (role IN ('admin','operator','jury'));
          END IF;
        END $$""",
+    # --- v5: müsabiqə sahibliyi; operatorlara açıb-bağlama və sıfırlama icazələri (bir dəfəlik)
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'contest' AND column_name = 'created_by') THEN
+           ALTER TABLE contest ADD COLUMN created_by INTEGER;
+           UPDATE users SET permissions = permissions || '["open_close","reset"]'::jsonb
+             WHERE role = 'operator' AND permissions ? 'contests';
+         END IF;
+       END $$""",
+    "CREATE INDEX IF NOT EXISTS ix_contest_created_by ON contest (created_by)",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'contest_created_by_fkey') THEN
+           ALTER TABLE contest ADD CONSTRAINT contest_created_by_fkey
+             FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+         END IF;
+       END $$""",
     # Artıq bal verilmiş müsabiqənin strukturu kilidli olmalıdır.
     "UPDATE contest c SET structure_locked = true, locked_at = COALESCE(locked_at, now()) "
     "WHERE structure_locked = false AND EXISTS (SELECT 1 FROM evaluations e WHERE e.contest_id = c.id)",
@@ -109,8 +125,8 @@ def init_db() -> None:
 
 
 def create_contest(db, name: str, eval_type: str, custom_max: int | None, *, seed: bool,
-                   teams: int = 10, is_open: bool = False) -> Contest:
-    c = Contest(name=name, eval_type=eval_type, custom_max=custom_max, is_open=is_open)
+                   teams: int = 10, is_open: bool = False, created_by: int | None = None) -> Contest:
+    c = Contest(name=name, eval_type=eval_type, custom_max=custom_max, is_open=is_open, created_by=created_by)
     db.add(c)
     db.flush()
     if seed:

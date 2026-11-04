@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -26,6 +26,7 @@ from .models import AuditLog, Contest, Criterion, Evaluation, Score, SessionToke
 from .schemas import (
     ContestCreateIn,
     ContestDeleteIn,
+    ContestResetIn,
     ContestStatusIn,
     ContestUpdateIn,
     EvalEditIn,
@@ -42,10 +43,22 @@ from .security import PERMISSIONS, hash_password, require_admin, require_perm, r
 from .setup_db import create_contest
 
 # Admin və operator bu routerə daxil olur; hər endpoint öz icazəsini ayrıca yoxlayır.
-router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_staff)])
+def contest_scope(request: Request, user: User = Depends(require_staff), db: Session = Depends(get_db)) -> None:
+    """Operator yalnız özünün yaratdığı müsabiqəyə daxil ola bilər (bütün /contests/{cid}/... yolları)."""
+    cid = request.path_params.get("cid")
+    if cid is None or user.role == "admin":
+        return
+    c = db.get(Contest, int(cid))
+    if c is None or c.created_by != user.id:
+        raise HTTPException(404, "Müsabiqə tapılmadı. Silinmiş ola bilər; səhifəni yeniləyin.")
+
+
+router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_staff), Depends(contest_scope)])
 ADMIN_ONLY = [Depends(require_admin)]
 PERM_CONTESTS = require_perm("contests")
 PERM_JURIES = require_perm("juries")
+PERM_OPEN_CLOSE = require_perm("open_close")
+PERM_RESET = require_perm("reset")
 
 CONFLICT_MSG = "Bu məlumat başqa istifadəçi tərəfindən dəyişdirilib. Səhifəni yeniləyib yenidən cəhd edin."
 USERNAME_RE = re.compile(r"^[\w.\-]{3,50}$", re.UNICODE)
@@ -78,8 +91,11 @@ def _contest_name_taken(db: Session, name: str, exclude_id: int | None = None) -
 
 # ================================================================ müsabiqələr
 @router.get("/contests")
-def list_contests(db: Session = Depends(get_db)):
-    contests = db.scalars(select(Contest).order_by(Contest.created_at.desc(), Contest.id.desc())).all()
+def list_contests(user: User = Depends(require_staff), db: Session = Depends(get_db)):
+    q = select(Contest).order_by(Contest.created_at.desc(), Contest.id.desc())
+    if user.role != "admin":
+        q = q.where(Contest.created_by == user.id)
+    contests = db.scalars(q).all()
     return {
         "items": [
             {**contest_payload(db, c), "progress": progress(db, c.id),
@@ -99,7 +115,7 @@ def create_new_contest(body: ContestCreateIn, admin: User = Depends(PERM_CONTEST
     db.execute(select(func.pg_advisory_xact_lock(724503)))
     if _contest_name_taken(db, name):
         raise HTTPException(409, "Bu adda müsabiqə artıq mövcuddur.")
-    c = create_contest(db, name, body.eval_type, custom_max, seed=body.seed_defaults,
+    c = create_contest(db, name, body.eval_type, custom_max, seed=body.seed_defaults, created_by=admin.id,
                        teams=body.team_count, is_open=False)
     audit(db, admin, "contest_create", f"Yeni müsabiqə yaradıldı: «{name}».",
           {"type": TYPE_LABELS[body.eval_type]}, contest_id=c.id)
@@ -108,7 +124,7 @@ def create_new_contest(body: ContestCreateIn, admin: User = Depends(PERM_CONTEST
 
 
 @router.post(C + "/status")
-def set_contest_status(cid: int, body: ContestStatusIn, admin: User = Depends(require_admin),
+def set_contest_status(cid: int, body: ContestStatusIn, admin: User = Depends(PERM_OPEN_CLOSE),
                        db: Session = Depends(get_db)):
     c = lock_contest(db, cid)
     if c.is_open != body.is_open:
@@ -118,6 +134,50 @@ def set_contest_status(cid: int, body: ContestStatusIn, admin: User = Depends(re
               f"«{c.name}» üzrə qiymətləndirmə {'açıldı' if body.is_open else 'bağlandı'}.", contest_id=c.id)
     db.commit()
     return {"contest": contest_payload(db, c)}
+
+
+@router.post(C + "/reset")
+def reset_contest(cid: int, body: ContestResetIn, admin: User = Depends(PERM_RESET), db: Session = Depends(get_db)):
+    """Bütün ballar silinir; istəyə görə jürilər, komandalar və meyarlar da. Struktur kilidi açılır."""
+    c = lock_contest(db, cid)
+    if (body.confirm_name or "").strip() != c.name:
+        raise HTTPException(400, "Təsdiq üçün müsabiqənin adını dəqiq yazın.")
+    before = progress(db, cid)
+    criteria = {x.id: x.name for x in _criteria(db, cid)}
+    teams = {t.id: t.name for t in _teams(db, cid)}
+    juries = {j.id: j.username for j in db.scalars(select(User).where(User.role == "jury", User.contest_id == cid))}
+    evals = db.scalars(
+        select(Evaluation).where(Evaluation.contest_id == cid).options(selectinload(Evaluation.scores))
+    ).all()
+    deleted_scores = [
+        {"jury": juries.get(e.jury_id, str(e.jury_id)), "team": teams.get(e.team_id, str(e.team_id)),
+         "scores": {criteria.get(s.criterion_id, str(s.criterion_id)): s.value for s in e.scores}}
+        for e in evals
+    ]
+    eval_ids = select(Evaluation.id).where(Evaluation.contest_id == cid)
+    db.execute(delete(Score).where(Score.evaluation_id.in_(eval_ids)))
+    db.execute(delete(Evaluation).where(Evaluation.contest_id == cid))
+    removed = []
+    if body.juries:
+        jids = select(User.id).where(User.role == "jury", User.contest_id == cid)
+        db.execute(delete(SessionToken).where(SessionToken.user_id.in_(jids)))
+        db.execute(delete(User).where(User.role == "jury", User.contest_id == cid))
+        removed.append(f"{len(juries)} jüri")
+    if body.teams:
+        db.execute(delete(Team).where(Team.contest_id == cid))
+        removed.append(f"{len(teams)} komanda")
+    if body.criteria:
+        db.execute(delete(Criterion).where(Criterion.contest_id == cid))
+        removed.append(f"{len(criteria)} meyar")
+    c.structure_locked = False
+    c.locked_at = None
+    c.version += 1
+    summary = f"«{c.name}» müsabiqəsinin məlumatları sıfırlandı: {before['completed']} qiymətləndirmə"
+    summary += (", " + ", ".join(removed) if removed else "") + " silindi."
+    audit(db, admin, "contest_reset", summary,
+          {"evaluations": before["completed"], "removed": removed, "deleted_scores": deleted_scores}, contest_id=cid)
+    db.commit()
+    return {"contest": contest_payload(db, c), "deleted_evaluations": before["completed"]}
 
 
 @router.post(C + "/delete")

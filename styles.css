@@ -392,3 +392,15 @@ tbody th { font-size: .93rem; }
 .perm-opt input { width: 20px; height: 20px; accent-color: var(--blue); flex: none; }
 .perm-opt:has(input:checked) { border-color: var(--blue); background: var(--blue-50); }
 .perm-opt span { font-weight: 500; font-size: .93rem; }
+
+/* ------------------------------------------------ jüri: meyarlar açılan siyahı ilə */
+.crit-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.crit-row { display: grid; grid-template-columns: 1fr minmax(150px, 46%); align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.crit-row:last-child { border-bottom: 0; }
+.crit-row label { font-weight: 600; font-size: .93rem; color: var(--navy); overflow-wrap: anywhere; }
+.crit-row select.input { min-height: 44px; padding: 8px 10px; font-weight: 600; cursor: pointer; }
+.crit-row select.input:not(.has-value) { color: var(--muted); font-weight: 500; }
+.crit-row select.input.has-value { border-color: var(--blue); background: var(--blue-50); color: var(--navy); }
+.crit-row select option { color: var(--text); font-weight: 500; }
+.crit-row select option:disabled { color: #9AA8BD; }
+@media (max-width: 380px) { .crit-row { grid-template-columns: 1fr; gap: 6px; } }

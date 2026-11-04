@@ -40,6 +40,10 @@ class Contest(Base):
     # Qiymətləndirmə açıqdırsa jürilər bal təsdiqləyə bilər.
     is_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"), default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+    # Müsabiqəni yaradan istifadəçi (operator yalnız öz müsabiqələrini görür).
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", use_alter=True, name="contest_created_by_fkey"), nullable=True, index=True
+    )
     eval_type: Mapped[str] = mapped_column(String(16), nullable=False, server_default="unique", default="unique")
     custom_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     structure_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"), default=False)

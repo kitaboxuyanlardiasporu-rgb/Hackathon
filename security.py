@@ -199,7 +199,10 @@ PERMISSIONS = {
     "juries": "Jüri əlavə etmək",
     "teams": "Komandaları müəyyənləşdirmək",
     "criteria": "Meyarları müəyyənləşdirmək",
+    "open_close": "Qiymətləndirməni açıb-bağlamaq",
+    "reset": "Müsabiqə məlumatlarını sıfırlamaq",
 }
+# Operator yalnız öz yaratdığı müsabiqələri görür və idarə edir (bax: contest_scope).
 NO_PERM = "Bu əməliyyat üçün icazəniz yoxdur. Adminə müraciət edin."
 
 
